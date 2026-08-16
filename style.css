@@ -500,6 +500,21 @@ body.dark-theme {
     line-height: 1.5;
 }
 
+/* Inline Link Styling for AI Generated Links */
+.inline-link {
+    color: var(--neon-cyan);
+    text-decoration: underline;
+    text-underline-offset: 3px;
+    word-break: break-all;
+    font-weight: 500;
+    transition: var(--transition);
+}
+
+.inline-link:hover {
+    color: var(--neon-purple);
+    text-decoration-color: var(--neon-purple);
+}
+
 .msg-sender {
     font-size: 0.78rem;
     font-weight: 600;
