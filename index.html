@@ -353,6 +353,19 @@
                     </div>
 
                     <div class="grid-2">
+                        <!-- Gemini API Key Settings -->
+                        <div class="glass-card">
+                            <h3><i class="fa-solid fa-wand-magic-sparkles text-cyan"></i> Gemini AI Configuration</h3>
+                            <p class="text-dim">Update or enter a custom Google Gemini API Key if daily quota expires.</p>
+                            <div class="mt-3">
+                                <span class="badge badge-purple" id="apiKeyStatusBadge">Active: Default Key</span>
+                            </div>
+                            <div class="mt-3">
+                                <button class="btn btn-secondary" onclick="openApiKeyModal()"><i class="fa-solid fa-key"></i> Edit Gemini API Key</button>
+                                <button class="btn btn-outline ml-2" onclick="resetApiKeyToDefault()"><i class="fa-solid fa-rotate-left"></i> Reset Key</button>
+                            </div>
+                        </div>
+
                         <!-- Firebase Sync Settings -->
                         <div class="glass-card">
                             <h3><i class="fa-solid fa-database text-cyan"></i> Cloud Storage Integration (Supabase)</h3>

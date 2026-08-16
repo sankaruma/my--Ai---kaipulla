@@ -60,6 +60,7 @@ document.addEventListener('DOMContentLoaded', () => {
     setupReminderNotificationChecker();
     renderPromptSuggestions();
     renderChatHistoryUI();
+    updateApiKeyBadge();
     
     // Check initial unlock state
     if (sessionStorage.getItem('nizhal_unlocked') === 'true') {
@@ -133,6 +134,7 @@ function switchView(viewId) {
     if (viewId === 'view-notes') renderNotesUI();
     if (viewId === 'view-drafts') renderDraftsUI();
     if (viewId === 'view-ideas') renderIdeasHistoryUI();
+    if (viewId === 'view-settings') updateApiKeyBadge();
 }
 
 // ==========================================================================
@@ -455,25 +457,16 @@ async function generateAiResponse(query, media) {
     chatList.insertAdjacentHTML('beforeend', typingHtml);
     chatList.scrollTop = chatList.scrollHeight;
 
-    let reply = '';
-    try {
-        const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent?key=${GEMINI_API_KEY}`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                contents: [
-                    ...historyForApi,
-                    { role: 'user', parts: [{ text: query || 'Analyze the attached media and give creative suggestions.' }] }
-                ],
-                systemInstruction: { parts: [{ text: systemPrompt }] }
-            })
-        });
-        const data = await response.json();
-        reply = data.candidates?.[0]?.content?.parts?.[0]?.text || 'Sorry, oru chinna glitch bro, try again!';
-    } catch (e) {
-        reply = 'Network error bro, check your internet connection and try again!';
-        console.log('[AI Error]', e);
-    }
+    const requestBody = {
+        contents: [
+            ...historyForApi,
+            { role: 'user', parts: [{ text: query || 'Analyze the attached media and give creative suggestions.' }] }
+        ],
+        systemInstruction: { parts: [{ text: systemPrompt }] }
+    };
+
+    const res = await callGeminiApi(requestBody);
+    const reply = res.text;
 
     // Remove the typing indicator now that we have a reply
     const typingEl = document.getElementById(typingId);
@@ -1078,24 +1071,13 @@ async function generateContentIdea() {
     }
     if (parts.length === 0) parts.push({ text: 'Give me a creative idea.' });
 
-    let reply = '';
-    try {
-        const requestBody = {
-            contents: [{ parts }],
-            systemInstruction: { parts: [{ text: systemPrompt }] }
-        };
+    const requestBody = {
+        contents: [{ parts }],
+        systemInstruction: { parts: [{ text: systemPrompt }] }
+    };
 
-        const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent?key=${GEMINI_API_KEY}`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(requestBody)
-        });
-        const data = await response.json();
-        reply = data.candidates?.[0]?.content?.parts?.[0]?.text || 'Sorry, oru chinna glitch bro, try again!';
-    } catch (e) {
-        reply = 'Network error bro, check your internet connection and try again!';
-        console.log('[Idea AI Error]', e);
-    }
+    const res = await callGeminiApi(requestBody);
+    const reply = res.text;
 
     btn.disabled = false;
     btn.innerHTML = originalBtnHtml;
@@ -1273,6 +1255,95 @@ function saveFirebaseConfig() {
         location.reload();
     } catch (e) {
         alert('❌ Something went wrong saving the config.');
+    }
+}
+
+function getGeminiApiKey() {
+    return localStorage.getItem('nizhal_gemini_api_key') || GEMINI_API_KEY;
+}
+
+async function callGeminiApi(requestBody, maxRetries = 2) {
+    const key = getGeminiApiKey();
+    const models = ['gemini-flash-latest', 'gemini-1.5-flash', 'gemini-2.0-flash'];
+
+    for (let attempt = 0; attempt <= maxRetries; attempt++) {
+        const model = models[attempt] || models[0];
+        try {
+            const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${key}`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(requestBody)
+            });
+
+            const data = await response.json();
+
+            if (response.ok && data.candidates?.[0]?.content?.parts?.[0]?.text) {
+                return { success: true, text: data.candidates[0].content.parts[0].text };
+            }
+
+            if (response.status === 503 || response.status === 429) {
+                console.warn(`[Gemini API] Received ${response.status} on attempt ${attempt + 1}. Retrying...`, data);
+                if (attempt < maxRetries) {
+                    await new Promise(r => setTimeout(r, 1200 * (attempt + 1)));
+                    continue;
+                }
+                if (response.status === 503) {
+                    return { success: false, text: '⚠️ Google Gemini server temporary-ah overloaded-ah irukku (503). Oru 1-2 minutes wait pannitu thirumba try pannunga bro!' };
+                }
+                if (response.status === 429) {
+                    return { success: false, text: '⚠️ Gemini API Free Daily Quota / Rate limit reach aayiduchu (429). aistudio.google.com-la pudhu API key create panni Settings-la podunga!' };
+                }
+            }
+
+            if (data.error?.message) {
+                return { success: false, text: `⚠️ Gemini Error (${data.error.code || response.status}): ${data.error.message}` };
+            }
+        } catch (err) {
+            console.error('[Gemini API network error]', err);
+            if (attempt < maxRetries) {
+                await new Promise(r => setTimeout(r, 1200));
+                continue;
+            }
+        }
+    }
+
+    return { success: false, text: 'Network error bro, check your internet connection and try again!' };
+}
+
+function openApiKeyModal() {
+    const currentKey = localStorage.getItem('nizhal_gemini_api_key') || '';
+    const newKey = prompt('Enter your Google Gemini API Key (from aistudio.google.com):', currentKey);
+    if (newKey !== null) {
+        const trimmed = newKey.trim();
+        if (trimmed) {
+            localStorage.setItem('nizhal_gemini_api_key', trimmed);
+            alert('✅ Gemini API Key updated successfully!');
+            updateApiKeyBadge();
+        } else {
+            localStorage.removeItem('nizhal_gemini_api_key');
+            alert('🔄 Reset to default Gemini API Key.');
+            updateApiKeyBadge();
+        }
+    }
+}
+
+function resetApiKeyToDefault() {
+    localStorage.removeItem('nizhal_gemini_api_key');
+    alert('🔄 Reset to default Gemini API Key.');
+    updateApiKeyBadge();
+}
+
+function updateApiKeyBadge() {
+    const badge = document.getElementById('apiKeyStatusBadge');
+    if (badge) {
+        const custom = localStorage.getItem('nizhal_gemini_api_key');
+        if (custom) {
+            badge.className = 'badge badge-green';
+            badge.innerText = 'Active: Custom User Key';
+        } else {
+            badge.className = 'badge badge-purple';
+            badge.innerText = 'Active: Default Key';
+        }
     }
 }
 
