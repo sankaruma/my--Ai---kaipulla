@@ -1,0 +1,24 @@
+{
+  "name": "Nizhal Thunai - Neon Shadow Assistant",
+  "short_name": "Nizhal AI",
+  "description": "Next-gen AI assistant for Instagram video ideas, anime storytelling, notes, reminders, tasks, and story drafts with multi-language AI.",
+  "start_url": "./index.html",
+  "display": "standalone",
+  "background_color": "#F7F5F0",
+  "theme_color": "#F7F5F0",
+  "orientation": "any",
+  "icons": [
+    {
+      "src": "https://www.gstatic.com/labs-code/stitch/favicon-192x192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "https://www.gstatic.com/labs-code/stitch/favicon-512x512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}

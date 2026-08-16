@@ -1,0 +1,498 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Nizhal Thunai - Neon Shadow AI Assistant (PWA)</title>
+    
+    <!-- PWA & SEO Meta Tags -->
+    <meta name="description" content="Nizhal Thunai (Neon Shadow Assistant) - AI PWA for Insta Video Ideas, Anime Storytelling, Voice Input, Notes, Reminders, Tasks, and Story Drafts with Firebase & Multi-language AI.">
+    <meta name="theme-color" content="#F7F5F0">
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="Nizhal AI">
+    <link rel="manifest" href="manifest.json">
+    <link rel="icon" href="https://www.gstatic.com/labs-code/stitch/favicon-32x32.png">
+
+    <!-- Fonts & Icons -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    
+    <!-- App Stylesheet -->
+    <link rel="stylesheet" href="style.css">
+
+    <!-- Firebase Compatibility SDKs -->
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
+</head>
+<body class="dark-theme">
+    <div id="app" class="app-viewport">
+
+        <!-- PWA Install Banner -->
+        <div id="pwaBanner" class="pwa-install-banner glass-card" style="display: none;">
+            <div class="banner-text">
+                <i class="fa-solid fa-cloud-arrow-down text-neon"></i>
+                <span>Install <strong>Nizhal Thunai</strong> as a standalone PWA!</span>
+            </div>
+            <div class="banner-actions">
+                <button class="btn btn-primary btn-sm" id="pwaInstallBtn"><i class="fa-solid fa-download"></i> Install</button>
+                <button class="btn-icon-sm" onclick="dismissPwaBanner()"><i class="fa-solid fa-xmark"></i></button>
+            </div>
+        </div>
+
+        <!-- Top Navigation Header -->
+        <header class="top-nav">
+            <div class="nav-brand" onclick="switchView('view-chat')">
+                <div class="logo-icon-small">
+                    <i class="fa-solid fa-user-ninja text-neon"></i>
+                </div>
+                <div class="brand-text">
+                    <span class="brand-name">Nizhal Thunai</span>
+                    <span class="brand-tag">PWA v2.5 • நிழல் துணை</span>
+                </div>
+            </div>
+
+            <div class="nav-actions">
+                <!-- Data Storage Status Badge -->
+                <div class="storage-badge" id="storageStatusBadge" title="Click to configure Supabase" onclick="openFirebaseModal()">
+                    <i class="fa-solid fa-database"></i>
+                    <span id="storageStatusText">Local Storage</span>
+                </div>
+
+                <!-- Lock App Button -->
+                <button class="icon-btn lock-btn" title="Lock App" onclick="lockApp()">
+                    <i class="fa-solid fa-lock"></i>
+                </button>
+            </div>
+        </header>
+
+        <!-- Main View Container -->
+        <main class="main-content">
+
+            <!-- 1. HOME CHAT & IDEAS VIEW -->
+            <section id="view-chat" class="screen-view active">
+                <div class="chat-container">
+                    
+                    <!-- Mode Switcher Bar (Insta Video Ideas vs Anime Ideas) -->
+                    <div class="chat-mode-toggle-bar glass-card">
+                        <div class="toggle-mode-title">
+                            <i class="fa-solid fa-wand-magic-sparkles text-neon"></i>
+                            <span>AI Idea Generator Mode:</span>
+                        </div>
+                        <div class="mode-pill-group">
+                            <button class="mode-pill active" id="modePillInsta" onclick="setChatMode('insta')">
+                                <i class="fa-solid fa-video"></i> Insta Video Ideas
+                            </button>
+                            <button class="mode-pill" id="modePillAnime" onclick="setChatMode('anime')">
+                                <i class="fa-solid fa-dragon"></i> Anime Ideas
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- Chat Header Info -->
+                    <div class="chat-info-bar glass-card">
+                        <div class="chat-assistant-status">
+                            <div class="avatar-glow">
+                                <i class="fa-solid fa-user-ninja" id="assistantAvatarIcon"></i>
+                            </div>
+                        </div>
+
+                        <div class="chat-actions-top">
+                            <button class="icon-btn" title="Voice Response Speech Toggle" onclick="toggleVoiceSpeech()"><i class="fa-solid fa-volume-xmark text-dim" id="speechToggleIcon"></i></button>
+                            <button class="icon-btn" title="Clear Chat History" onclick="clearChatHistory()"><i class="fa-solid fa-trash-can"></i></button>
+                        </div>
+                    </div>
+
+                    <!-- Chat Message List -->
+                    <div class="chat-messages" id="chatMessageList">
+                        <div class="message msg-ai">
+                            <div class="msg-avatar"><i class="fa-solid fa-user-ninja"></i></div>
+                            <div class="msg-body glass-card">
+                                <div class="msg-sender">Nizhal Thunai <span class="time">12:52 PM</span></div>
+                                <p id="welcomeMessageText">Hey! Insta ku videos plan pannalama? Idea sollu, naan help pannuren.</p>
+                                
+                                <div class="prompt-suggestions" id="promptSuggestionsBox">
+                                    <!-- Dynamic Prompt Chips inserted via JS -->
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Attachment Preview Bar (Image/Video Uploads) -->
+                    <div id="mediaPreviewContainer" class="media-preview-container glass-card" style="display: none;">
+                        <div class="preview-content">
+                            <div id="mediaPreviewElement"></div>
+                            <div class="media-meta">
+                                <span class="badge badge-cyan"><i class="fa-solid fa-microchip"></i> Ready for AI Analysis</span>
+                                <span class="media-filename" id="mediaFilename">file.png</span>
+                            </div>
+                        </div>
+                        <button class="btn-icon-sm" onclick="removeMediaAttachment()"><i class="fa-solid fa-xmark"></i></button>
+                    </div>
+
+                    <!-- Chat Input Controls Bar -->
+                    <div class="chat-input-bar glass-card">
+                        <!-- Media File Upload Input Button -->
+                        <label for="mediaUploadInput" class="icon-btn-upload" title="Upload Image or Video for AI Analysis">
+                            <i class="fa-solid fa-paperclip"></i>
+                            <input type="file" id="mediaUploadInput" accept="image/*,video/*" onchange="handleMediaUpload(event)">
+                        </label>
+
+                        <!-- Voice Mic Button (Web Speech API) -->
+                        <button class="icon-btn-mic" id="micBtn" title="Speak to input text" onclick="toggleVoiceRecording()">
+                            <i class="fa-solid fa-microphone"></i>
+                        </button>
+
+                        <!-- Text Input -->
+                        <input type="text" id="chatInput" placeholder="Ask for Insta Reels ideas, anime plots... (Tamil / Tanglish / English)" oninput="handleTypingLanguageDetection()" onkeypress="handleChatEnter(event)">
+
+                        <!-- Send Button -->
+                        <button class="btn btn-primary btn-send" onclick="sendChatMessage()">
+                            <i class="fa-solid fa-paper-plane"></i>
+                        </button>
+                    </div>
+                </div>
+            </section>
+
+            <!-- 2. NOTES & REFERENCES VIEW -->
+            <section id="view-notes" class="screen-view">
+                <div class="notes-container">
+                    <div class="section-header">
+                        <div>
+                            <h2><i class="fa-solid fa-note-sticky text-neon"></i> Notes & Reference Reminders</h2>
+                            <p class="text-dim">Save references, video inspiration, and schedule reminders with notification alerts.</p>
+                        </div>
+                        <button class="btn btn-primary" onclick="openAddNoteModal()"><i class="fa-solid fa-plus"></i> New Note / Reminder</button>
+                    </div>
+
+                    <!-- Category Filter Pills -->
+                    <div class="filter-bar">
+                        <button class="filter-chip active" onclick="filterNotes('all')">All Notes</button>
+                        <button class="filter-chip" onclick="filterNotes('reminders')">⏰ Reminders</button>
+                        <button class="filter-chip" onclick="filterNotes('reference')">📌 References</button>
+                        <button class="filter-chip" onclick="filterNotes('ideas')">💡 Video Ideas</button>
+                    </div>
+
+                    <!-- Notes Grid -->
+                    <div class="notes-grid" id="notesGrid">
+                        <!-- Rendered dynamically from JS/Firebase -->
+                    </div>
+                </div>
+            </section>
+
+            <!-- 3. TASKS VIEW -->
+            <section id="view-tasks" class="screen-view">
+                <div class="tasks-container">
+                    <div class="section-header">
+                        <div>
+                            <h2><i class="fa-solid fa-list-check text-neon"></i> Task Manager</h2>
+                            <p class="text-dim">Organize video production steps, anime story milestones, and deadlines.</p>
+                        </div>
+                        <button class="btn btn-primary" onclick="focusNewTaskInput()"><i class="fa-solid fa-plus"></i> Add Task</button>
+                    </div>
+
+                    <!-- Task Completion Gauge -->
+                    <div class="task-progress-card glass-card">
+                        <div class="progress-info">
+                            <div>
+                                <h3>Production Progress</h3>
+                                <p class="text-dim"><span id="completedTaskCount">0</span> of <span id="totalTaskCount">0</span> tasks completed</p>
+                            </div>
+                            <div class="percentage-display" id="taskPercentDisplay">0%</div>
+                        </div>
+                        <div class="progress-bar-track">
+                            <div class="progress-bar-fill" id="taskProgressBarFill" style="width: 0%"></div>
+                        </div>
+                    </div>
+
+                    <!-- Quick Add Task Input -->
+                    <div class="add-task-bar glass-card">
+                        <input type="text" id="newTaskInput" placeholder="Enter task name..." onkeypress="handleTaskEnter(event)">
+                        <input type="date" id="newTaskDueDate" class="task-date-picker" title="Due Date">
+                        <button class="btn btn-primary" onclick="addNewTask()"><i class="fa-solid fa-plus"></i> Save Task</button>
+                    </div>
+
+                    <!-- Active Tasks Section -->
+                    <div class="task-group-box">
+                        <h3 class="task-group-title"><i class="fa-solid fa-spinner text-pink"></i> Active Pending Tasks</h3>
+                        <div class="task-list" id="activeTaskList">
+                            <!-- Rendered dynamically -->
+                        </div>
+                    </div>
+
+                    <!-- Completed Tasks Section -->
+                    <div class="task-group-box mt-4">
+                        <h3 class="task-group-title"><i class="fa-solid fa-circle-check text-green"></i> Completed Tasks</h3>
+                        <div class="task-list" id="completedTaskList">
+                            <!-- Rendered dynamically -->
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- 4. STORY DRAFTS VIEW -->
+            <section id="view-drafts" class="screen-view">
+                <div class="drafts-container">
+                    <div class="section-header">
+                        <div>
+                            <h2><i class="fa-solid fa-feather-pointed text-neon"></i> Story & Script Drafts</h2>
+                            <p class="text-dim">Writing studio for anime plots, video scripts, and chapter drafts.</p>
+                        </div>
+                        <div class="draft-actions">
+                            <button class="btn btn-secondary" onclick="createNewDraft()"><i class="fa-solid fa-file-circle-plus"></i> New Draft</button>
+                            <button class="btn btn-primary" onclick="saveCurrentDraft()"><i class="fa-solid fa-floppy-disk"></i> Save Draft</button>
+                        </div>
+                    </div>
+
+                    <div class="draft-workspace-grid">
+                        <!-- Drafts Sidebar Selector -->
+                        <div class="drafts-list-sidebar glass-card">
+                            <h4>Saved Drafts</h4>
+                            <div class="draft-item-list" id="draftsListContainer">
+                                <!-- Rendered dynamically -->
+                            </div>
+                        </div>
+
+                        <!-- Main Editor -->
+                        <div class="draft-editor-box glass-card">
+                            <div class="editor-header">
+                                <input type="text" id="draftTitleInput" placeholder="Story / Script Title..." value="Untitled Anime Arc">
+                                <div class="draft-meta-info">
+                                    <span class="badge badge-purple" id="wordCountBadge">0 Words</span>
+                                    <span class="auto-save-status" id="autoSaveStatus"><i class="fa-solid fa-check"></i> Saved</span>
+                                </div>
+                            </div>
+
+                            <!-- AI Assistant Toolbar -->
+                            <div class="ai-writing-toolbar">
+                                <span class="toolbar-label"><i class="fa-solid fa-robot text-neon"></i> AI Assistant:</span>
+                                <button class="chip" onclick="aiExtendStory('cliffhanger')">⚡ Add Cliffhanger</button>
+                                <button class="chip" onclick="aiExtendStory('extend')">✍️ Extend Current Scene</button>
+                                <button class="chip" onclick="aiExtendStory('twist')">🌀 Character Plot Twist</button>
+                            </div>
+
+                            <textarea id="draftBodyInput" placeholder="Start writing your anime script or story chapter here... Nizhal AI will auto-detect Tamil, Tanglish, or English..." oninput="handleDraftBodyInput()"></textarea>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- 5. CONTENT IDEAS STUDIO VIEW (Insta / Anime / Comedy Dialogue) -->
+            <section id="view-ideas" class="screen-view">
+                <div class="ideas-container">
+                    <div class="section-header">
+                        <div>
+                            <h2><i class="fa-solid fa-lightbulb text-neon"></i> Content Ideas Studio</h2>
+                            <p class="text-dim">Upload a photo/video and generate Insta Reel ideas, Anime concepts, or Comedy Call &amp; Counter dialogues.</p>
+                        </div>
+                    </div>
+
+                    <!-- Idea Type Toggle -->
+                    <div class="chat-mode-toggle-bar glass-card">
+                        <div class="toggle-mode-title">
+                            <i class="fa-solid fa-wand-magic-sparkles text-neon"></i>
+                            <span>Idea Type:</span>
+                        </div>
+                        <div class="mode-pill-group">
+                            <button class="mode-pill active" id="ideaPillInsta" onclick="setIdeaMode('insta')">
+                                <i class="fa-solid fa-video"></i> Insta Reel Idea
+                            </button>
+                            <button class="mode-pill" id="ideaPillAnime" onclick="setIdeaMode('anime')">
+                                <i class="fa-solid fa-dragon"></i> Anime Idea
+                            </button>
+                            <button class="mode-pill" id="ideaPillComedy" onclick="setIdeaMode('comedy')">
+                                <i class="fa-solid fa-face-laugh-squint"></i> Comedy Dialogue
+                            </button>
+                            <button class="mode-pill" id="ideaPillDialogueId" onclick="setIdeaMode('dialogueid')">
+                                <i class="fa-solid fa-magnifying-glass"></i> Dialogue / Scene ID
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- Idea Generator Box -->
+                    <div class="idea-generator-box glass-card">
+                        <div id="ideaMediaPreviewContainer" class="media-preview-container glass-card" style="display: none;">
+                            <div class="preview-content">
+                                <div id="ideaMediaPreviewElement"></div>
+                                <div class="media-meta">
+                                    <span class="badge badge-cyan"><i class="fa-solid fa-microchip"></i> Ready for AI Analysis</span>
+                                    <span class="media-filename" id="ideaMediaFilename">file.png</span>
+                                </div>
+                            </div>
+                            <button class="btn-icon-sm" onclick="removeIdeaMedia()"><i class="fa-solid fa-xmark"></i></button>
+                        </div>
+
+                        <label for="ideaMediaUploadInput" class="idea-upload-dropzone">
+                            <i class="fa-solid fa-cloud-arrow-up"></i>
+                            <span>Click to upload a photo or video (optional) - for AI analysis</span>
+                            <input type="file" id="ideaMediaUploadInput" accept="image/*,video/*" onchange="handleIdeaMediaUpload(event)" style="display:none;">
+                        </label>
+
+                        <textarea id="ideaContextInput" placeholder="Describe the topic, mood, or context (Tamil / Tanglish / English)... e.g. 'oru school life comedy scene' or 'anime power reveal moment'"></textarea>
+
+                        <button class="btn btn-primary" onclick="generateContentIdea()" id="generateIdeaBtn">
+                            <i class="fa-solid fa-sparkles"></i> Generate Idea
+                        </button>
+                    </div>
+
+                    <!-- Generated Ideas History -->
+                    <div class="ideas-history-grid" id="ideasHistoryGrid">
+                        <!-- Rendered dynamically -->
+                    </div>
+                </div>
+            </section>
+
+            <!-- 6. DESIGN SYSTEM & SETTINGS VIEW -->
+            <section id="view-settings" class="screen-view">
+                <div class="settings-container">
+                    <div class="section-header">
+                        <h2><i class="fa-solid fa-sliders text-neon"></i> Settings & Firebase Configuration</h2>
+                        <p class="text-dim">Manage data storage, security PIN, and PWA settings.</p>
+                    </div>
+
+                    <div class="grid-2">
+                        <!-- Firebase Sync Settings -->
+                        <div class="glass-card">
+                            <h3><i class="fa-solid fa-database text-cyan"></i> Cloud Storage Integration (Supabase)</h3>
+                            <p class="text-dim">Connect your Supabase project to sync data across devices.</p>
+                            <div class="mt-3">
+                                <span class="badge badge-green" id="firebaseConnectedStatus">Active Engine: Local Storage (Offline Ready)</span>
+                            </div>
+                            <div class="mt-3">
+                                <button class="btn btn-secondary" onclick="openFirebaseModal()"><i class="fa-solid fa-key"></i> Edit Supabase Credentials</button>
+                            </div>
+                        </div>
+
+                        <!-- Security & PIN Settings -->
+                        <div class="glass-card">
+                            <h3><i class="fa-solid fa-shield-halved text-cyan"></i> Security & PIN Passcode</h3>
+                            <p class="text-dim">Change your 4-digit security PIN or toggle auto-lock.</p>
+                            <div class="mt-3">
+                                <button class="btn btn-outline" onclick="openChangePinModal()"><i class="fa-solid fa-key"></i> Change PIN Passcode</button>
+                                <button class="btn btn-danger ml-2" onclick="resetPinToDefault()"><i class="fa-solid fa-rotate-left"></i> Reset to Default (1234)</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+        </main>
+
+        <!-- Bottom Navigation Bar -->
+        <nav class="bottom-nav">
+            <button class="nav-item active" data-view="view-chat" onclick="switchView('view-chat')">
+                <i class="fa-solid fa-comments"></i>
+                <span>Home Chat</span>
+            </button>
+            <button class="nav-item" data-view="view-notes" onclick="switchView('view-notes')">
+                <i class="fa-solid fa-note-sticky"></i>
+                <span>Notes & Reminders</span>
+            </button>
+            <button class="nav-item" data-view="view-tasks" onclick="switchView('view-tasks')">
+                <i class="fa-solid fa-list-check"></i>
+                <span>Tasks</span>
+            </button>
+            <button class="nav-item" data-view="view-drafts" onclick="switchView('view-drafts')">
+                <i class="fa-solid fa-feather-pointed"></i>
+                <span>Story Drafts</span>
+            </button>
+            <button class="nav-item" data-view="view-ideas" onclick="switchView('view-ideas')">
+                <i class="fa-solid fa-lightbulb"></i>
+                <span>Content Ideas</span>
+            </button>
+            <button class="nav-item" data-view="view-settings" onclick="switchView('view-settings')">
+                <i class="fa-solid fa-sliders"></i>
+                <span>Settings</span>
+            </button>
+        </nav>
+
+        <!-- PIN LOCK OVERLAY SCREEN -->
+        <div id="pinLockOverlay" class="pin-lock-overlay">
+            <div class="pin-card glass-card">
+                <div class="lock-icon-glow">
+                    <i class="fa-solid fa-lock" id="pinLockIcon"></i>
+                </div>
+                <h2>Nizhal Thunai Security</h2>
+                <p class="text-dim">Enter 4-Digit Security PIN to Unlock</p>
+
+                <!-- PIN Visual Dots -->
+                <div class="pin-dots" id="overlayPinDots">
+                    <span class="dot"></span>
+                    <span class="dot"></span>
+                    <span class="dot"></span>
+                    <span class="dot"></span>
+                </div>
+
+                <!-- Keypad Grid -->
+                <div class="keypad-grid">
+                    <button class="key-btn" onclick="overlayPressPin('1')">1</button>
+                    <button class="key-btn" onclick="overlayPressPin('2')">2</button>
+                    <button class="key-btn" onclick="overlayPressPin('3')">3</button>
+                    <button class="key-btn" onclick="overlayPressPin('4')">4</button>
+                    <button class="key-btn" onclick="overlayPressPin('5')">5</button>
+                    <button class="key-btn" onclick="overlayPressPin('6')">6</button>
+                    <button class="key-btn" onclick="overlayPressPin('7')">7</button>
+                    <button class="key-btn" onclick="overlayPressPin('8')">8</button>
+                    <button class="key-btn" onclick="overlayPressPin('9')">9</button>
+                    <button class="key-btn key-action" onclick="overlayTriggerBiometric()"><i class="fa-solid fa-fingerprint"></i></button>
+                    <button class="key-btn" onclick="overlayPressPin('0')">0</button>
+                    <button class="key-btn key-action" onclick="overlayClearPin()"><i class="fa-solid fa-delete-left"></i></button>
+                </div>
+
+                <div class="pin-hint">
+                    <span>Default Passcode: <strong>1 2 3 4</strong></span>
+                </div>
+            </div>
+        </div>
+
+        <!-- Add Note / Reminder Modal -->
+        <div class="modal-backdrop" id="addNoteModal">
+            <div class="modal-box glass-card">
+                <h3><i class="fa-solid fa-plus-circle text-neon"></i> Add Note / Reminder</h3>
+                
+                <label class="modal-label">Title</label>
+                <input type="text" id="modalNoteTitle" placeholder="Note or Reminder Title..." class="cyber-input">
+                
+                <label class="modal-label">Category</label>
+                <select id="modalNoteCategory" class="cyber-select-full">
+                    <option value="reminders">⏰ Reminder</option>
+                    <option value="reference" selected>📌 Reference</option>
+                    <option value="ideas">💡 Video Idea</option>
+                </select>
+
+                <label class="modal-label">Reminder Date & Time (Optional)</label>
+                <input type="datetime-local" id="modalNoteReminderTime" class="cyber-input">
+
+                <label class="modal-label">Details / Content</label>
+                <textarea id="modalNoteBody" placeholder="Write reference links, ideas, or details..." class="cyber-textarea"></textarea>
+
+                <div class="modal-actions">
+                    <button class="btn btn-secondary" onclick="closeAddNoteModal()">Cancel</button>
+                    <button class="btn btn-primary" onclick="saveNewNote()"><i class="fa-solid fa-check"></i> Save</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Supabase Credentials Modal -->
+        <div class="modal-backdrop" id="firebaseConfigModal">
+            <div class="modal-box glass-card">
+                <h3><i class="fa-solid fa-database text-cyan"></i> Storage Config Setup (Supabase)</h3>
+                <p class="text-dim">Paste your Supabase Project URL and Anon Key below to enable cloud sync.</p>
+                <label class="modal-label">Project URL</label>
+                <input type="text" id="supabaseUrlInput" class="cyber-input code-font" placeholder="https://xxxxxxxxxxx.supabase.co">
+                <label class="modal-label">Anon (Public) Key</label>
+                <textarea id="supabaseKeyInput" placeholder="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..." class="cyber-textarea code-font"></textarea>
+                <div class="modal-actions">
+                    <button class="btn btn-secondary" onclick="closeFirebaseModal()">Close</button>
+                    <button class="btn btn-primary" onclick="saveFirebaseConfig()"><i class="fa-solid fa-floppy-disk"></i> Connect Supabase</button>
+                </div>
+            </div>
+        </div>
+
+    </div>
+
+    <!-- Application Script -->
+    <script src="app.js"></script>
+</body>
+</html>

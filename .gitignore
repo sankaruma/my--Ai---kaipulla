@@ -1,0 +1,20 @@
+# Dependencies
+node_modules/
+package-lock.json
+
+# Logs & Debug
+*.log
+firebase-debug.log
+firebase-debug.*.log
+.system_generated/
+
+# OS / Temporary files
+.DS_Store
+Thumbs.db
+New Text Document.txt
+*.tmp
+
+# Environment / Secrets
+.env
+.env.local
+.env.*.local
