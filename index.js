@@ -28,8 +28,9 @@ exports.geminiProxy = onRequest({ secrets: [GEMINI_API_KEY], cors: true, invoker
 
     try {
         const key = GEMINI_API_KEY.value();
+        const model = req.query.model || req.body.model || 'gemini-3.6-flash';
         const response = await fetch(
-            `https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent?key=${key}`,
+            `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${key}`,
             {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },

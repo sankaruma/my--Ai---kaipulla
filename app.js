@@ -3,7 +3,7 @@
    ========================================================================== */
 
 // Global App State
-const GEMINI_API_KEY = "AQ.Ab8RN6LcIXoMfqQamgcLgMix08dRNVbnUtKy48U_n4vN74z4Sg";
+const GEMINI_API_KEY = ""; // Key is managed server-side via backend proxy (GEMINI_API_KEY secret) or user custom key
 const state = {
     isUnlocked: false,
     userPin: localStorage.getItem('nizhal_pin') || '1234',
@@ -1262,35 +1262,66 @@ function getGeminiApiKey() {
     return localStorage.getItem('nizhal_gemini_api_key') || GEMINI_API_KEY;
 }
 
-async function callGeminiApi(requestBody, maxRetries = 2) {
-    const key = getGeminiApiKey();
-    const models = ['gemini-flash-latest', 'gemini-1.5-flash', 'gemini-2.0-flash'];
+async function callGeminiApi(requestBody, maxRetries = 3) {
+    const customKey = getGeminiApiKey();
+    // Supported Gemini Flash models in order of priority (primary: gemini-2.5-flash / gemini-3.6-flash, fallback: gemini-2.0-flash / gemini-flash-latest)
+    const models = ['gemini-2.5-flash', 'gemini-2.0-flash', 'gemini-3.6-flash', 'gemini-flash-latest'];
+    let modelIndex = 0;
 
     for (let attempt = 0; attempt <= maxRetries; attempt++) {
-        const model = models[attempt] || models[0];
+        const model = models[modelIndex] || models[models.length - 1];
         try {
-            const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${key}`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(requestBody)
-            });
+            let response, data;
 
-            const data = await response.json();
+            if (customKey) {
+                // User provided custom API key in UI settings: invoke Google API directly
+                response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${customKey}`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(requestBody)
+                });
+                data = await response.json();
+            } else {
+                // Default: proxy through backend serverless Cloud Function to conceal API key from browser network tab
+                const proxyUrl = window.location.hostname.includes('cloudfunctions.net') || window.location.hostname.includes('firebaseapp.com')
+                    ? '/geminiProxy'
+                    : 'https://us-central1-nizhal-thunai-app.cloudfunctions.net/geminiProxy';
+
+                response = await fetch(`${proxyUrl}?model=${encodeURIComponent(model)}`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(requestBody)
+                });
+                data = await response.json();
+            }
 
             if (response.ok && data.candidates?.[0]?.content?.parts?.[0]?.text) {
                 return { success: true, text: data.candidates[0].content.parts[0].text };
             }
 
-            if (response.status === 503 || response.status === 429) {
-                console.warn(`[Gemini API] Received ${response.status} on attempt ${attempt + 1}. Retrying...`, data);
+            // 404 Not Found / Deprecated model: immediately fall back to the next supported model without retrying the broken name
+            if (response.status === 404 || data.error?.code === 404 || (data.error?.message && data.error.message.toLowerCase().includes('not found'))) {
+                console.warn(`[Gemini API] Model '${model}' returned 404 Not Found. Falling back to next model...`);
+                if (modelIndex < models.length - 1) {
+                    modelIndex++;
+                    continue;
+                }
+            }
+
+            // 503 Overloaded or 429 Rate Limit: retry with backoff and advance fallback model if available
+            if (response.status === 503 || response.status === 429 || data.error?.code === 503 || data.error?.code === 429) {
+                console.warn(`[Gemini API] Received ${response.status || data.error?.code} on attempt ${attempt + 1}. Retrying...`, data);
+                if (modelIndex < models.length - 1) {
+                    modelIndex++;
+                }
                 if (attempt < maxRetries) {
                     await new Promise(r => setTimeout(r, 1200 * (attempt + 1)));
                     continue;
                 }
-                if (response.status === 503) {
+                if (response.status === 503 || data.error?.code === 503) {
                     return { success: false, text: '⚠️ Google Gemini server temporary-ah overloaded-ah irukku (503). Oru 1-2 minutes wait pannitu thirumba try pannunga bro!' };
                 }
-                if (response.status === 429) {
+                if (response.status === 429 || data.error?.code === 429) {
                     return { success: false, text: '⚠️ Gemini API Free Daily Quota / Rate limit reach aayiduchu (429). aistudio.google.com-la pudhu API key create panni Settings-la podunga!' };
                 }
             }
@@ -1300,6 +1331,9 @@ async function callGeminiApi(requestBody, maxRetries = 2) {
             }
         } catch (err) {
             console.error('[Gemini API network error]', err);
+            if (modelIndex < models.length - 1) {
+                modelIndex++;
+            }
             if (attempt < maxRetries) {
                 await new Promise(r => setTimeout(r, 1200));
                 continue;
@@ -1342,7 +1376,7 @@ function updateApiKeyBadge() {
             badge.innerText = 'Active: Custom User Key';
         } else {
             badge.className = 'badge badge-purple';
-            badge.innerText = 'Active: Default Key';
+            badge.innerText = 'Active: Serverless Backend Proxy';
         }
     }
 }
