@@ -3,7 +3,7 @@
    ========================================================================== */
 
 // Global App State
-const GEMINI_API_KEY = ""; // Key is managed server-side via backend proxy (GEMINI_API_KEY secret) or user custom key
+const GEMINI_API_KEY = "AQ.Ab8RN6LcIXoMfqQamgcLgMix08dRNVbnUtKy48U_n4vN74z4Sg";
 const state = {
     isUnlocked: false,
     userPin: localStorage.getItem('nizhal_pin') || '1234',
@@ -462,7 +462,8 @@ async function generateAiResponse(query, media) {
             ...historyForApi,
             { role: 'user', parts: [{ text: query || 'Analyze the attached media and give creative suggestions.' }] }
         ],
-        systemInstruction: { parts: [{ text: systemPrompt }] }
+        systemInstruction: { parts: [{ text: systemPrompt }] },
+        generationConfig: { temperature: 1.8 }
     };
 
     const res = await callGeminiApi(requestBody);
@@ -1071,9 +1072,11 @@ async function generateContentIdea() {
     }
     if (parts.length === 0) parts.push({ text: 'Give me a creative idea.' });
 
+    const ideaTemp = state.ideaMode === 'dialogueid' ? 0.6 : 1.8;
     const requestBody = {
         contents: [{ parts }],
-        systemInstruction: { parts: [{ text: systemPrompt }] }
+        systemInstruction: { parts: [{ text: systemPrompt }] },
+        generationConfig: { temperature: ideaTemp }
     };
 
     const res = await callGeminiApi(requestBody);
@@ -1263,40 +1266,57 @@ function getGeminiApiKey() {
 }
 
 async function callGeminiApi(requestBody, maxRetries = 3) {
-    const customKey = getGeminiApiKey();
-    // Supported Gemini Flash models in order of priority (primary: gemini-2.5-flash / gemini-3.6-flash, fallback: gemini-2.0-flash / gemini-flash-latest)
-    const models = ['gemini-2.5-flash', 'gemini-2.0-flash', 'gemini-3.6-flash', 'gemini-flash-latest'];
+    const key = getGeminiApiKey();
+    // Supported Gemini Flash models in order of priority (primary: gemini-2.5-flash / gemini-flash-latest, fallback: gemini-3.6-flash / gemini-2.0-flash)
+    const models = ['gemini-2.5-flash', 'gemini-flash-latest', 'gemini-3.6-flash', 'gemini-2.0-flash'];
     let modelIndex = 0;
 
     for (let attempt = 0; attempt <= maxRetries; attempt++) {
         const model = models[modelIndex] || models[models.length - 1];
         try {
-            let response, data;
+            // Clone requestBody to avoid mutating original object across retries
+            const payload = JSON.parse(JSON.stringify(requestBody));
 
-            if (customKey) {
-                // User provided custom API key in UI settings: invoke Google API directly
-                response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${customKey}`, {
+            // Default Thinking Mode: include thinkingConfig for models supporting thinking ('gemini-2.5-flash' or 'gemini-flash-latest')
+            const supportsThinking = (model === 'gemini-2.5-flash' || model === 'gemini-flash-latest');
+            if (supportsThinking) {
+                payload.generationConfig = payload.generationConfig || {};
+                if (!payload.generationConfig.thinkingConfig) {
+                    payload.generationConfig.thinkingConfig = { thinkingLevel: 'high' };
+                }
+            }
+
+            let response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${key}`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
+            let data = await response.json();
+
+            // If API returns an error specifically about thinkingConfig / thinkingLevel not supported, retry once without it
+            if (!response.ok && data.error?.message && (
+                data.error.message.includes('thinkingConfig') ||
+                data.error.message.includes('thinkingLevel') ||
+                data.error.message.includes('thinking')
+            )) {
+                console.warn(`[Gemini API] thinkingConfig not supported for model '${model}'. Retrying without thinkingConfig...`);
+                if (payload.generationConfig) {
+                    delete payload.generationConfig.thinkingConfig;
+                }
+                response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${key}`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(requestBody)
-                });
-                data = await response.json();
-            } else {
-                // Default: proxy through backend serverless Cloud Function to conceal API key from browser network tab
-                const proxyUrl = window.location.hostname.includes('cloudfunctions.net') || window.location.hostname.includes('firebaseapp.com')
-                    ? '/geminiProxy'
-                    : 'https://us-central1-nizhal-thunai-app.cloudfunctions.net/geminiProxy';
-
-                response = await fetch(`${proxyUrl}?model=${encodeURIComponent(model)}`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(requestBody)
+                    body: JSON.stringify(payload)
                 });
                 data = await response.json();
             }
 
-            if (response.ok && data.candidates?.[0]?.content?.parts?.[0]?.text) {
-                return { success: true, text: data.candidates[0].content.parts[0].text };
+            if (response.ok && data.candidates?.[0]?.content?.parts) {
+                const parts = data.candidates[0].content.parts;
+                const text = parts.map(p => p.text).filter(Boolean).join('\n');
+                if (text) {
+                    return { success: true, text };
+                }
             }
 
             // 404 Not Found / Deprecated model: immediately fall back to the next supported model without retrying the broken name
@@ -1376,7 +1396,7 @@ function updateApiKeyBadge() {
             badge.innerText = 'Active: Custom User Key';
         } else {
             badge.className = 'badge badge-purple';
-            badge.innerText = 'Active: Serverless Backend Proxy';
+            badge.innerText = 'Active: Default Key';
         }
     }
 }
