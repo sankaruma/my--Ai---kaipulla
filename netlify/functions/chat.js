@@ -233,7 +233,13 @@ function parseAnimeTeachResponse(text, currentProject) {
         const candidate = text.trim().replace(/^```json\s*/i, '').replace(/\s*```$/, '');
         const parsed = JSON.parse(candidate);
         const requestedState = parsed.projectState || {};
-        const stage = ANIME_STAGES.includes(requestedState.stage) ? requestedState.stage : (currentProject.stage || 'idea');
+        const currentStage = ANIME_STAGES.includes(currentProject.stage) ? currentProject.stage : 'idea';
+        const currentStageIndex = ANIME_STAGES.indexOf(currentStage);
+        const requestedStageIndex = ANIME_STAGES.indexOf(requestedState.stage);
+        const canAdvanceOneStage = requestedStageIndex === currentStageIndex + 1;
+        const stage = requestedStageIndex === currentStageIndex || canAdvanceOneStage
+            ? requestedState.stage
+            : currentStage;
         const keyDecisions = Array.isArray(requestedState.keyDecisions)
             ? requestedState.keyDecisions.filter(item => typeof item === 'string' && item.trim()).map(item => item.trim().slice(0, 240)).slice(-20)
             : (Array.isArray(currentProject.keyDecisions) ? currentProject.keyDecisions : []);
@@ -242,7 +248,7 @@ function parseAnimeTeachResponse(text, currentProject) {
             projectState: { stage, keyDecisions }
         };
     } catch {
-        return { reply: '', projectState: { stage: currentProject.stage || 'idea', keyDecisions: currentProject.keyDecisions || [] } };
+        return { reply: '', projectState: { stage: ANIME_STAGES.includes(currentProject.stage) ? currentProject.stage : 'idea', keyDecisions: currentProject.keyDecisions || [] } };
     }
 }
 
