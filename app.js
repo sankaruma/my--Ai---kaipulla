@@ -463,11 +463,67 @@ async function generateAiResponse(query, media) {
             { role: 'user', parts: [{ text: query || 'Analyze the attached media and give creative suggestions.' }] }
         ],
         systemInstruction: { parts: [{ text: systemPrompt }] },
-        generationConfig: { temperature: 1.8 }
+        generationConfig: { temperature: 1.8 },
+        tools: [
+            {
+                functionDeclarations: [
+                    {
+                        name: 'create_task',
+                        description: 'Creates a task or reminder note when the user explicitly asks to remember, note down, or be reminded of something.',
+                        parameters: {
+                            type: 'OBJECT',
+                            properties: {
+                                title: { type: 'STRING', description: 'Short task title' },
+                                details: { type: 'STRING', description: 'Extra context or details' },
+                                due: { type: 'STRING', description: 'Natural language due date/time if mentioned' }
+                            },
+                            required: ['title']
+                        }
+                    }
+                ]
+            }
+        ]
     };
 
     const res = await callGeminiApi(requestBody);
-    const reply = res.text;
+    let reply = res.text || '';
+
+    // Check if model invoked Function Calling to auto-create a task
+    if (res.functionCall && res.functionCall.name === 'create_task') {
+        const args = res.functionCall.args || res.functionCall.parameters || {};
+        const title = args.title || 'New Task';
+        const details = args.details || '';
+        const due = args.due || '';
+
+        const newTask = {
+            id: Date.now(),
+            title: title,
+            name: title,
+            details: details,
+            due: due || null,
+            dueDate: due || null,
+            createdAt: new Date().toISOString(),
+            completed: false,
+            done: false
+        };
+
+        state.tasks.unshift(newTask);
+        saveDataToStorage('tasks', state.tasks);
+
+        if (state.currentView === 'view-tasks') {
+            renderTasksUI();
+        }
+
+        let taskNotice = `✅ Task added: "${title}"`;
+        if (due) taskNotice += ` (Due: ${due})`;
+        if (details) taskNotice += `\nDetails: ${details}`;
+
+        reply = reply ? `${taskNotice}\n\n${reply}` : taskNotice;
+    }
+
+    if (!reply) {
+        reply = 'Done!';
+    }
 
     // Remove the typing indicator now that we have a reply
     const typingEl = document.getElementById(typingId);
@@ -791,8 +847,8 @@ function renderTasksUI() {
     const completedList = document.getElementById('completedTaskList');
     if (!activeList || !completedList) return;
 
-    const activeTasks = state.tasks.filter(t => !t.completed);
-    const completedTasks = state.tasks.filter(t => t.completed);
+    const activeTasks = state.tasks.filter(t => !(t.completed || t.done));
+    const completedTasks = state.tasks.filter(t => (t.completed || t.done));
 
     activeList.innerHTML = activeTasks.length > 0 ? activeTasks.map(task => renderTaskItemHtml(task)).join('') : '<div class="text-dim">No pending active tasks.</div>';
     completedList.innerHTML = completedTasks.length > 0 ? completedTasks.map(task => renderTaskItemHtml(task)).join('') : '<div class="text-dim">No completed tasks yet.</div>';
@@ -808,15 +864,20 @@ function renderTasksUI() {
 }
 
 function renderTaskItemHtml(task) {
+    const titleText = task.title || task.name || 'Untitled Task';
+    const dueText = task.due || task.dueDate || 'No due date';
+    const isDone = Boolean(task.done || task.completed);
+    const detailsText = task.details ? `<div class="text-dim mt-1" style="font-size:0.85rem;"><i class="fa-solid fa-circle-info"></i> ${escapeHtml(task.details)}</div>` : '';
     return `
-        <div class="task-item glass-card ${task.completed ? 'completed' : ''}">
+        <div class="task-item glass-card ${isDone ? 'completed' : ''}">
             <label class="custom-checkbox">
-                <input type="checkbox" ${task.completed ? 'checked' : ''} onchange="toggleTaskCompletion(${task.id})">
+                <input type="checkbox" ${isDone ? 'checked' : ''} onchange="toggleTaskCompletion(${task.id})">
                 <span class="checkmark"></span>
             </label>
             <div class="task-content">
-                <span class="task-name">${escapeHtml(task.name)}</span>
-                <span class="task-meta"><i class="fa-regular fa-calendar"></i> Due: ${task.dueDate || 'No due date'}</span>
+                <span class="task-name">${escapeHtml(titleText)}</span>
+                <span class="task-meta"><i class="fa-regular fa-calendar"></i> Due: ${escapeHtml(dueText)}</span>
+                ${detailsText}
             </div>
             <button class="btn-icon-sm text-pink" onclick="deleteTask(${task.id})"><i class="fa-solid fa-trash-can"></i></button>
         </div>
@@ -842,9 +903,14 @@ function addNewTask() {
 
     const newTask = {
         id: Date.now(),
-        name,
+        title: name,
+        name: name,
+        details: '',
+        due: dueDate || null,
         dueDate: dueDate || null,
-        completed: false
+        createdAt: new Date().toISOString(),
+        completed: false,
+        done: false
     };
 
     state.tasks.unshift(newTask);
@@ -857,7 +923,9 @@ function addNewTask() {
 function toggleTaskCompletion(id) {
     const task = state.tasks.find(t => t.id === id);
     if (task) {
-        task.completed = !task.completed;
+        const nextState = !(task.completed || task.done);
+        task.completed = nextState;
+        task.done = nextState;
         saveDataToStorage('tasks', state.tasks);
         renderTasksUI();
     }
@@ -1313,9 +1381,15 @@ async function callGeminiApi(requestBody, maxRetries = 3) {
 
             if (response.ok && data.candidates?.[0]?.content?.parts) {
                 const parts = data.candidates[0].content.parts;
+                const funcCallPart = parts.find(p => p.functionCall);
                 const text = parts.map(p => p.text).filter(Boolean).join('\n');
-                if (text) {
-                    return { success: true, text };
+                if (funcCallPart || text) {
+                    return {
+                        success: true,
+                        text: text,
+                        functionCall: funcCallPart ? funcCallPart.functionCall : null,
+                        rawParts: parts
+                    };
                 }
             }
 
