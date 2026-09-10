@@ -54,7 +54,7 @@ function extractClaudeText(result) {
         : '';
 }
 
-async function callClaude(messages, system, maxTokens) {
+async function callClaude(messages, system, maxTokens, usageUserId) {
     const response = await fetch('https://api.anthropic.com/v1/messages', {
         method: 'POST',
         headers: {
@@ -73,7 +73,17 @@ async function callClaude(messages, system, maxTokens) {
     if (!response.ok) {
         throw new Error(result.error?.message || 'Claude API request failed');
     }
-    return extractClaudeText(result);
+    if (usageUserId) {
+        try {
+            await recordClaudeUsage(getFirebaseAdmin().firestore().collection('users').doc(usageUserId), result.usage || {});
+        } catch (usageError) {
+            console.error('[Claude usage log]', usageError);
+        }
+    }
+    return {
+        text: extractClaudeText(result),
+        usage: result.usage || {}
+    };
 }
 
 function parseIntent(text) {
@@ -292,21 +302,71 @@ async function handleAnimeTeach(message, userRef, projectId) {
         keyDecisions: Array.isArray(project.data.keyDecisions) ? project.data.keyDecisions.slice(-20) : []
     });
     const systemPrompt = `${SYSTEM_PROMPT}\n\nMODE INSTRUCTIONS FOR THIS TURN (anime_teach):\n${MODE_INSTRUCTIONS.anime_teach}\n\n${ANIME_TEACH_PROMPT}`;
-    const rawResponse = await callClaude([{
+    const claudeResponse = await callClaude([{
         role: 'user',
         content: `Current project state:\n${projectContext}\n\nUser message:\n${message}`
-    }], systemPrompt, 900);
-    const parsed = parseAnimeTeachResponse(rawResponse, project.data);
+    }], systemPrompt, 900, userRef.id);
+    const parsed = parseAnimeTeachResponse(claudeResponse.text, project.data);
     if (!parsed.reply) {
         parsed.reply = 'Project state save aachu, but teaching response generate panna mudiyala. Same stage-la one small next step try pannalaam.';
     }
     return { project, ...parsed };
 }
 
+async function recordClaudeUsage(userRef, usage) {
+    const now = new Date();
+    const dateKey = now.toISOString().slice(0, 10);
+    const weekStart = new Date(now);
+    const day = weekStart.getUTCDay() || 7;
+    weekStart.setUTCDate(weekStart.getUTCDate() - day + 1);
+    const weekKey = weekStart.toISOString().slice(0, 10);
+    const usageData = {
+        date: dateKey,
+        weekStart: weekKey,
+        requests: admin.firestore.FieldValue.increment(1),
+        inputTokens: admin.firestore.FieldValue.increment(Number(usage.input_tokens) || 0),
+        outputTokens: admin.firestore.FieldValue.increment(Number(usage.output_tokens) || 0),
+        updatedAt: admin.firestore.FieldValue.serverTimestamp()
+    };
+    await Promise.all([
+        userRef.collection('usageDaily').doc(dateKey).set(usageData, { merge: true }),
+        userRef.collection('usageWeekly').doc(weekKey).set({
+            weekStart: weekKey,
+            requests: usageData.requests,
+            inputTokens: usageData.inputTokens,
+            outputTokens: usageData.outputTokens,
+            updatedAt: usageData.updatedAt
+        }, { merge: true })
+    ]);
+}
+
+async function saveSessionExchange(userRef, sessionId, message, reply) {
+    if (!sessionId) return;
+    const messagesRef = userRef.collection('sessions').doc(sessionId).collection('messages');
+    const timestamp = admin.firestore.FieldValue.serverTimestamp();
+    await Promise.all([
+        messagesRef.add({ role: 'user', content: message, createdAt: timestamp }),
+        messagesRef.add({ role: 'assistant', content: reply, createdAt: timestamp })
+    ]);
+}
+
+async function pruneOldSessionMessages(userRef, sessionId) {
+    if (!sessionId) return;
+    const cutoff = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+    const oldMessages = await userRef.collection('sessions').doc(sessionId).collection('messages')
+        .where('createdAt', '<', cutoff)
+        .limit(100)
+        .get();
+    if (oldMessages.empty) return;
+    const batch = getFirebaseAdmin().firestore().batch();
+    oldMessages.docs.forEach(doc => batch.delete(doc.ref));
+    await batch.commit();
+}
+
 async function handleMovieMemeSearch(message, userRef) {
     let queries = [];
     try {
-        queries = parseSearchPlan(await callClaude([{ role: 'user', content: message }], SEARCH_PLANNER_PROMPT, 120));
+        queries = parseSearchPlan((await callClaude([{ role: 'user', content: message }], SEARCH_PLANNER_PROMPT, 120, userRef.id)).text);
     } catch (error) {
         console.warn('[Movie search] Query planning failed', error);
     }
@@ -333,11 +393,11 @@ async function handleMovieMemeSearch(message, userRef) {
         ? 'The user asked to save a result. Return saveMetadata for the single best result only, using its exact URL from the search results.'
         : 'The user did not ask to save anything. Return saveMetadata as null.';
     const responsePrompt = `${SYSTEM_PROMPT}\n\nMODE INSTRUCTIONS FOR THIS TURN (movie_meme_search):\n${MODE_INSTRUCTIONS.movie_meme_search}\n\nSEARCH RESULT RULES:\nUse only the supplied search results and exact URLs. If none clearly fit, say that honestly. For this search turn, extend the normal JSON response with one additional field and return ONLY valid JSON in this exact shape: {"reply":"Tanglish or matching user-language answer with likely movie/scene, why it fits, and direct links","memory":null,"saveMetadata":null}. ${saveInstruction}`;
-    const rawResponse = await callClaude([{
+    const claudeResponse = await callClaude([{
         role: 'user',
         content: `User description:\n${message}\n\nSearch results:\n${resultContext}`
-    }], responsePrompt, 900);
-    const parsedResponse = parseSearchResponse(rawResponse, rankedResults);
+    }], responsePrompt, 900, userRef.id);
+    const parsedResponse = parseSearchResponse(claudeResponse.text, rankedResults);
     return parsedResponse.reply
         ? parsedResponse
         : { reply: `Indha clues-ku closest results ivanga:\n\n${rankedResults.slice(0, 3).map(result => `**${result.title}**\n${result.url}`).join('\n\n')}`, saveMetadata: null };
@@ -459,6 +519,9 @@ exports.handler = async (event) => {
     const projectId = typeof payload.projectId === 'string' && /^[A-Za-z0-9_-]{1,80}$/.test(payload.projectId)
         ? payload.projectId
         : 'main-anime-project';
+    const sessionId = typeof payload.sessionId === 'string' && /^[A-Za-z0-9_-]{1,100}$/.test(payload.sessionId)
+        ? payload.sessionId
+        : '';
     if (!message) {
         return { statusCode: 400, headers: corsHeaders, body: JSON.stringify({ error: 'message is required' }) };
     }
@@ -471,14 +534,20 @@ exports.handler = async (event) => {
 
     try {
         const { userRef, profile, context } = await loadUserContext(authUser.uid);
+        try {
+            await pruneOldSessionMessages(userRef, sessionId);
+        } catch (cleanupError) {
+            console.error('[Session cleanup]', cleanupError);
+        }
         let intent = 'ambiguous';
         try {
-            const classificationText = await callClaude(
+            const classificationResponse = await callClaude(
                 [{ role: 'user', content: message }],
                 CLASSIFIER_PROMPT,
-                80
+                80,
+                authUser.uid
             );
-            intent = parseIntent(classificationText);
+            intent = parseIntent(classificationResponse.text);
         } catch (classificationError) {
             console.warn('[Chat routing] Classification failed; using general_chat', classificationError);
         }
@@ -495,6 +564,11 @@ exports.handler = async (event) => {
                         externalLink: searchResponse.saveMetadata.externalLink,
                         createdAt: admin.firestore.FieldValue.serverTimestamp()
                     });
+                }
+                try {
+                    await saveSessionExchange(userRef, sessionId, message, searchResponse.reply);
+                } catch (sessionError) {
+                    console.error('[Session exchange write]', sessionError);
                 }
                 return { statusCode: 200, headers: corsHeaders, body: JSON.stringify({ reply: searchResponse.reply }) };
             } catch (searchError) {
@@ -520,6 +594,11 @@ exports.handler = async (event) => {
             } catch (projectError) {
                 console.error('[Anime project state write]', projectError);
             }
+            try {
+                await saveSessionExchange(userRef, sessionId, message, animeResponse.reply);
+            } catch (sessionError) {
+                console.error('[Session exchange write]', sessionError);
+            }
             return { statusCode: 200, headers: corsHeaders, body: JSON.stringify({ reply: animeResponse.reply }) };
         }
 
@@ -528,8 +607,8 @@ exports.handler = async (event) => {
             `${SYSTEM_PROMPT}\n\nMODE INSTRUCTIONS FOR THIS TURN (${mode}):\n${modeInstruction}`,
             context
         );
-        const rawReply = await callClaude(messages, systemPrompt, 700);
-        const envelope = parseClaudeEnvelope(rawReply);
+        const claudeResponse = await callClaude(messages, systemPrompt, 700, authUser.uid);
+        const envelope = parseClaudeEnvelope(claudeResponse.text);
         try {
             if (envelope.memory) {
                 await userRef.collection('longTermMemory').add({
@@ -547,6 +626,11 @@ exports.handler = async (event) => {
             }
         } catch (memoryError) {
             console.error('[Firestore memory write]', memoryError);
+        }
+        try {
+            await saveSessionExchange(userRef, sessionId, message, envelope.reply);
+        } catch (sessionError) {
+            console.error('[Session exchange write]', sessionError);
         }
         return { statusCode: 200, headers: corsHeaders, body: JSON.stringify({ reply: envelope.reply }) };
     } catch (error) {

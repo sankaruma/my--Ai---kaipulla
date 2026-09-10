@@ -12,6 +12,7 @@ const state = {
     currentView: 'view-chat',
     chatMode: 'insta', // 'insta' or 'anime'
     animeProjectId: localStorage.getItem('nizhal_anime_project_id') || 'main-anime-project',
+    sessionId: sessionStorage.getItem('nizhal_session_id') || (typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `session-${Date.now()}-${Math.random().toString(36).slice(2)}`),
     activeLanguage: 'English',
     languageMode: 'auto', // 'auto' | 'Tamil Script' | 'Tanglish' | 'English'
     voiceSpeechEnabled: false,
@@ -92,6 +93,7 @@ OVERALL LENGTH:
 // 1. INITIALIZATION & LIFECYCLE
 // ==========================================================================
 document.addEventListener('DOMContentLoaded', () => {
+    sessionStorage.setItem('nizhal_session_id', state.sessionId);
     initSupabaseIfConfigured();
     loadStoredData();
     initPwaServiceWorker();
@@ -568,6 +570,7 @@ async function generateAiResponse(query, media) {
             body: JSON.stringify({
                 message: query || 'Analyze the attached media and give creative suggestions.',
                 projectId: state.chatMode === 'anime' ? state.animeProjectId : undefined,
+                sessionId: state.sessionId,
                 conversationHistory: historyForApi.map(msg => ({
                     role: msg.role === 'model' ? 'assistant' : 'user',
                     content: msg.parts[0].text

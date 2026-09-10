@@ -2,7 +2,7 @@
    NIZHAL THUNAI - SERVICE WORKER (PWA Offline & Push Notifications)
    ========================================================================== */
 
-const CACHE_NAME = 'nizhal-thunai-v6';
+const CACHE_NAME = 'nizhal-thunai-v7';
 const ASSETS_TO_CACHE = [
     './',
     './index.html',
@@ -18,7 +18,7 @@ self.addEventListener('install', (event) => {
     event.waitUntil(
         caches.open(CACHE_NAME).then((cache) => {
             console.log('[ServiceWorker] Pre-caching offline assets');
-            return cache.addAll(ASSETS_TO_CACHE);
+            return Promise.allSettled(ASSETS_TO_CACHE.map(asset => cache.add(asset)));
         }).then(() => self.skipWaiting())
     );
 });
@@ -69,6 +69,9 @@ self.addEventListener('fetch', (event) => {
                 });
 
                 return networkResponse;
+            }).catch(() => {
+                if (event.request.mode === 'navigate') return caches.match('./index.html');
+                throw new Error('Offline and asset is not cached');
             });
         })
     );

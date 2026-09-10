@@ -3,6 +3,8 @@
   "short_name": "Nizhal AI",
   "description": "Next-gen AI assistant for Instagram video ideas, anime storytelling, notes, reminders, tasks, and story drafts with multi-language AI.",
   "start_url": "./index.html",
+  "scope": "./",
+  "id": "nizhal-thunai",
   "display": "standalone",
   "background_color": "#F7F5F0",
   "theme_color": "#F7F5F0",
