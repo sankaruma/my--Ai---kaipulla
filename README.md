@@ -33,10 +33,19 @@ python -m http.server 8080
 npx -y http-server . -p 8080
 ```
 
-### 2. Deploy to Firebase
+### 2. Phase 1 Netlify + Firebase Auth setup
+
+1. In Firebase Console, enable Email/Password and/or Google sign-in, then add your Netlify domain under Authentication > Settings > Authorized domains.
+2. Set `window.NIZHAL_FIREBASE_CONFIG` in `index.html` to your Firebase web app configuration. This config is public; do not put a Claude key there.
+3. In Netlify, set `CLAUDE_API_KEY`, `FIREBASE_PROJECT_ID`, `FIREBASE_SERVICE_ACCOUNT_JSON`, and `YOUTUBE_API_KEY` environment variables. The service-account variable must contain the complete Firebase Admin service-account JSON on one line. Optionally set `BING_SEARCH_API_KEY` for additional general web results and `CLAUDE_MODEL` to override the default Claude model.
+4. Deploy the repository with Netlify. `netlify.toml` publishes the project root and discovers `netlify/functions/chat.js`.
+
+The main chat keeps conversation history only in the current browser session and sends requests to `/.netlify/functions/chat`. Notes, tasks, drafts, and Content Ideas are outside the Phase 1 Claude chat loop.
+
+### 3. Deploy to Netlify
 
 ```bash
-firebase deploy
+netlify deploy --prod
 ```
 
 ---
@@ -45,8 +54,8 @@ firebase deploy
 
 - **Frontend**: HTML5, CSS3 (Custom Glassmorphism Design System), JavaScript (ES6+)
 - **Typography**: Outfit, JetBrains Mono (Google Fonts)
-- **APIs**: Google Gemini AI, YouTube Data API v3
-- **Backend / Cloud**: Firebase Cloud Functions, Firebase Hosting
+- **APIs**: Claude API via Netlify Function
+- **Backend / Cloud**: Netlify Functions, Firebase Authentication
 
 ---
 

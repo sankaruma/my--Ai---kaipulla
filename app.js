@@ -3,13 +3,15 @@
    ========================================================================== */
 
 // Global App State
-const GEMINI_API_KEY = "AQ.Ab8RN6LcIXoMfqQamgcLgMix08dRNVbnUtKy48U_n4vN74z4Sg";
+const GEMINI_API_KEY = '';
 const state = {
     isUnlocked: false,
+    isAuthenticated: false,
     userPin: localStorage.getItem('nizhal_pin') || '1234',
     currentOverlayPin: '',
     currentView: 'view-chat',
     chatMode: 'insta', // 'insta' or 'anime'
+    animeProjectId: localStorage.getItem('nizhal_anime_project_id') || 'main-anime-project',
     activeLanguage: 'English',
     languageMode: 'auto', // 'auto' | 'Tamil Script' | 'Tanglish' | 'English'
     voiceSpeechEnabled: false,
@@ -94,18 +96,75 @@ document.addEventListener('DOMContentLoaded', () => {
     loadStoredData();
     initPwaServiceWorker();
     initWebSpeechRecognition();
+    initFirebaseAuth();
     setupReminderNotificationChecker();
     renderPromptSuggestions();
     renderChatHistoryUI();
     updateApiKeyBadge();
     
-    // Check initial unlock state
-    if (sessionStorage.getItem('nizhal_unlocked') === 'true') {
-        unlockApp();
-    } else {
-        lockApp();
-    }
+    lockApp();
 });
+
+function initFirebaseAuth() {
+    const status = document.getElementById('firebaseAuthStatus');
+    if (!window.NIZHAL_FIREBASE_CONFIG || typeof firebase === 'undefined') {
+        if (status) status.innerText = 'Firebase Auth is not configured yet.';
+        return;
+    }
+
+    try {
+        document.getElementById('pinLockOverlay')?.classList.add('firebase-auth-configured');
+        if (!firebase.apps.length) firebase.initializeApp(window.NIZHAL_FIREBASE_CONFIG);
+        firebase.auth().onAuthStateChanged(user => {
+            state.isAuthenticated = Boolean(user);
+            if (user) {
+                unlockApp();
+                if (status) status.innerText = `Signed in as ${user.email || user.displayName || 'Nizhal Thunai user'}`;
+            } else {
+                lockApp();
+            }
+        });
+
+        const emailForm = document.getElementById('firebaseEmailAuthForm');
+        if (emailForm) {
+            emailForm.addEventListener('submit', async event => {
+                event.preventDefault();
+                const email = document.getElementById('firebaseEmailInput').value.trim();
+                const password = document.getElementById('firebasePasswordInput').value;
+                if (!email || !password) return;
+                if (status) status.innerText = 'Signing in...';
+                try {
+                    await firebase.auth().signInWithEmailAndPassword(email, password);
+                } catch (error) {
+                    if (error.code === 'auth/user-not-found') {
+                        try {
+                            await firebase.auth().createUserWithEmailAndPassword(email, password);
+                        } catch (createError) {
+                            if (status) status.innerText = createError.message;
+                        }
+                    } else if (status) {
+                        status.innerText = error.message;
+                    }
+                }
+            });
+        }
+
+        const googleButton = document.getElementById('firebaseGoogleAuthBtn');
+        if (googleButton) {
+            googleButton.addEventListener('click', async () => {
+                if (status) status.innerText = 'Opening Google sign-in...';
+                try {
+                    await firebase.auth().signInWithPopup(new firebase.auth.GoogleAuthProvider());
+                } catch (error) {
+                    if (status) status.innerText = error.message;
+                }
+            });
+        }
+    } catch (error) {
+        console.error('[Firebase Auth Init]', error);
+        if (status) status.innerText = 'Firebase Auth could not be initialized.';
+    }
+}
 
 // Service Worker Registration
 function initPwaServiceWorker() {
@@ -179,6 +238,7 @@ function switchView(viewId) {
 // ==========================================================================
 function lockApp() {
     state.isUnlocked = false;
+    state.isAuthenticated = false;
     sessionStorage.setItem('nizhal_unlocked', 'false');
     const overlay = document.getElementById('pinLockOverlay');
     if (overlay) overlay.classList.remove('unlocked');
@@ -494,68 +554,32 @@ async function generateAiResponse(query, media) {
     chatList.insertAdjacentHTML('beforeend', typingHtml);
     chatList.scrollTop = chatList.scrollHeight;
 
-    const requestBody = {
-        contents: [
-            ...historyForApi,
-            { role: 'user', parts: [{ text: query || 'Analyze the attached media and give creative suggestions.' }] }
-        ],
-        systemInstruction: { parts: [{ text: systemPrompt }] },
-        generationConfig: { temperature: 1.8 },
-        tools: [
-            {
-                functionDeclarations: [
-                    {
-                        name: 'create_task',
-                        description: 'Creates a task or reminder note when the user explicitly asks to remember, note down, or be reminded of something.',
-                        parameters: {
-                            type: 'OBJECT',
-                            properties: {
-                                title: { type: 'STRING', description: 'Short task title' },
-                                details: { type: 'STRING', description: 'Extra context or details' },
-                                due: { type: 'STRING', description: 'Natural language due date/time if mentioned' }
-                            },
-                            required: ['title']
-                        }
-                    }
-                ]
-            }
-        ]
-    };
-
-    const res = await callGeminiApi(requestBody);
-    let reply = res.text || '';
-
-    // Check if model invoked Function Calling to auto-create a task
-    if (res.functionCall && res.functionCall.name === 'create_task') {
-        const args = res.functionCall.args || res.functionCall.parameters || {};
-        const title = args.title || 'New Task';
-        const details = args.details || '';
-        const due = args.due || '';
-
-        const newTask = {
-            id: Date.now(),
-            title: title,
-            name: title,
-            details: details,
-            due: due || null,
-            dueDate: due || null,
-            createdAt: new Date().toISOString(),
-            completed: false,
-            done: false
-        };
-
-        state.tasks.unshift(newTask);
-        saveDataToStorage('tasks', state.tasks);
-
-        if (state.currentView === 'view-tasks') {
-            renderTasksUI();
-        }
-
-        let taskNotice = `✅ Task added: "${title}"`;
-        if (due) taskNotice += ` (Due: ${due})`;
-        if (details) taskNotice += `\nDetails: ${details}`;
-
-        reply = reply ? `${taskNotice}\n\n${reply}` : taskNotice;
+    let reply = '';
+    try {
+        const currentUser = typeof firebase !== 'undefined' && firebase.auth().currentUser;
+        if (!currentUser) throw new Error('Please sign in before chatting.');
+        const idToken = await currentUser.getIdToken();
+        const response = await fetch('/.netlify/functions/chat', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                Authorization: `Bearer ${idToken}`
+            },
+            body: JSON.stringify({
+                message: query || 'Analyze the attached media and give creative suggestions.',
+                projectId: state.chatMode === 'anime' ? state.animeProjectId : undefined,
+                conversationHistory: historyForApi.map(msg => ({
+                    role: msg.role === 'model' ? 'assistant' : 'user',
+                    content: msg.parts[0].text
+                }))
+            })
+        });
+        const result = await response.json();
+        if (!response.ok) throw new Error(result.error || 'Chat request failed');
+        reply = result.reply || '';
+    } catch (error) {
+        console.error('[Chat Function]', error);
+        reply = 'Unable to reach Nizhal Thunai right now. Please try again.';
     }
 
     if (!reply) {
@@ -579,7 +603,6 @@ async function generateAiResponse(query, media) {
 
     const aiMsgObj = { sender: 'ai', text: reply, lang, time: timeNow };
     state.chatHistory[state.chatMode].push(aiMsgObj);
-    saveDataToStorage('chat', state.chatHistory);
     chatList.scrollTop = chatList.scrollHeight;
 
     if (state.voiceSpeechEnabled && 'speechSynthesis' in window) {
@@ -591,7 +614,6 @@ async function generateAiResponse(query, media) {
 function clearChatHistory() {
     if (confirm('Clear chat messages for this mode?')) {
         state.chatHistory[state.chatMode] = [];
-        saveDataToStorage('chat', state.chatHistory);
         setChatMode(state.chatMode);
     }
 }
@@ -1260,12 +1282,8 @@ function loadStoredData() {
 
     state.contentIdeas = JSON.parse(localStorage.getItem('nizhal_ideas')) || [];
 
-    const storedChat = JSON.parse(localStorage.getItem('nizhal_chat'));
-    if (storedChat && typeof storedChat === 'object' && !Array.isArray(storedChat)) {
-        state.chatHistory = { insta: storedChat.insta || [], anime: storedChat.anime || [] };
-    } else {
-        state.chatHistory = { insta: [], anime: [] };
-    }
+    localStorage.removeItem('nizhal_chat');
+    state.chatHistory = { insta: [], anime: [] };
 }
 
 async function saveDataToStorage(key, data) {
@@ -1534,4 +1552,12 @@ function escapeHtml(text) {
     return text.replace(/[&<>"']/g, function(m) {
         return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;' }[m];
     });
+}
+
+async function signOutUser() {
+    if (typeof firebase !== 'undefined' && firebase.apps.length && state.isAuthenticated) {
+        await firebase.auth().signOut();
+    } else {
+        lockApp();
+    }
 }
