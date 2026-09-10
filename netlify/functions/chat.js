@@ -201,22 +201,43 @@ const ANIME_STAGES = [
     'final_export'
 ];
 
-const ANIME_TEACH_PROMPT = `You are the focused 2D anime/Krita teaching guide inside Nizhal Thunai.
-The project pipeline is ordered exactly as: idea -> story -> character_design -> visual_style -> character_art_krita -> animation_2d_krita -> sound -> edit -> final_export.
+const ANIME_3D_STAGES = [
+    'idea',
+    'story',
+    'character_design',
+    'visual_style',
+    'character_modeling_blender',
+    'texturing',
+    'cel_shading',
+    'rigging_blender',
+    'animation_blender',
+    'environment_blender',
+    'lighting_blender',
+    'camera_blender',
+    'rendering_blender',
+    'sound',
+    'edit',
+    'final_output'
+];
+
+const ANIME_TEACH_PROMPT = `You are the focused anime teaching guide inside Nizhal Thunai. Support both tracks in the same project document.
+The 2D/Krita pipeline is ordered exactly as: idea -> story -> character_design -> visual_style -> character_art_krita -> animation_2d_krita -> sound -> edit -> final_export.
+The 3D/Blender pipeline shares idea, story, character design, and visual style with the 2D track, then is ordered exactly as: idea -> story -> character_design -> visual_style -> character_modeling_blender -> texturing -> cel_shading -> rigging_blender -> animation_blender -> environment_blender -> lighting_blender -> camera_blender -> rendering_blender -> sound -> edit -> final_output.
+Respect the project's track. If no track is set, recommend 2D/Krita for a first anime project because Krita is free, achievable, and focused. If the user explicitly wants 3D, use the Blender track without blocking them. Blender is preferred for this path because it is free, covers modeling through rendering in one application, and has a large community and tutorial ecosystem. Mention Unreal Engine only if the user specifically wants real-time or cinematic rendering later.
 Teach only the user's current stage from the project state. Each reply must briefly include:
 1. What this stage is and why it matters now.
-2. The specific Krita tool or feature to use. For sound/edit/export, name a suitable free tool when Krita is not the right tool.
+2. The specific Krita or Blender tool/feature to use. For sound/edit/export, name a suitable free tool when neither is the right tool.
 3. One short actionable next step.
 4. Common mistakes at this stage.
 5. What comes next.
 Keep the guidance focused for one turn; do not dump the full pipeline or a full course.
 If the user says they are stuck, first distinguish technical error, creative block, or tool confusion. Ask at most one short question only if needed, then give the smallest next action.
-For a first anime project, recommend 2D in Krita because it is achievable. Do not block an explicit 3D request; explain that 3D is a later Phase 6b path.
+When the user reaches rigging or animation on the 3D track, proactively break the work into smaller sub-steps such as skeleton setup, weights, controls, a tiny test pose, blocking, timing, and polish. Do not wait for them to say they are stuck.
 Preserve existing project decisions and only update the stage when the user clearly moves forward.
 
 Return ONLY valid JSON in this exact shape:
-{"reply":"focused teaching response","projectState":{"stage":"idea|story|character_design|visual_style|character_art_krita|animation_2d_krita|sound|edit|final_export","keyDecisions":["short durable decision"]}}
-The keyDecisions array must contain only durable project decisions such as character names, style choices, or story beats. Keep each item short and return the merged current decisions, not a transcript.`;
+{"reply":"focused teaching response","projectState":{"track":"2d|3d","stage":"idea|story|character_design|visual_style|character_art_krita|animation_2d_krita|character_modeling_blender|texturing|cel_shading|rigging_blender|animation_blender|environment_blender|lighting_blender|camera_blender|rendering_blender|sound|edit|final_export|final_output","trackStage":"same current track stage","keyDecisions":["short durable decision"]}}
+The track must be 2d or 3d. The keyDecisions array must contain only durable project decisions such as character names, style choices, or story beats. Keep each item short and return the merged current decisions, not a transcript.`;
 
 async function loadAnimeProject(userRef, projectId) {
     const projectRef = userRef.collection('projects').doc(projectId);
@@ -233,29 +254,41 @@ function parseAnimeTeachResponse(text, currentProject) {
         const candidate = text.trim().replace(/^```json\s*/i, '').replace(/\s*```$/, '');
         const parsed = JSON.parse(candidate);
         const requestedState = parsed.projectState || {};
-        const currentStage = ANIME_STAGES.includes(currentProject.stage) ? currentProject.stage : 'idea';
-        const currentStageIndex = ANIME_STAGES.indexOf(currentStage);
-        const requestedStageIndex = ANIME_STAGES.indexOf(requestedState.stage);
+        const track = requestedState.track === '2d' || requestedState.track === '3d'
+            ? requestedState.track
+            : (currentProject.track === '3d' ? '3d' : '2d');
+        const stages = track === '3d' ? ANIME_3D_STAGES : ANIME_STAGES;
+        const currentStage = stages.includes(currentProject.trackStage || currentProject.stage)
+            ? (currentProject.trackStage || currentProject.stage)
+            : 'idea';
+        const currentStageIndex = stages.indexOf(currentStage);
+        const requestedStageIndex = stages.indexOf(requestedState.trackStage || requestedState.stage);
         const canAdvanceOneStage = requestedStageIndex === currentStageIndex + 1;
         const stage = requestedStageIndex === currentStageIndex || canAdvanceOneStage
-            ? requestedState.stage
+            ? (requestedState.trackStage || requestedState.stage)
             : currentStage;
         const keyDecisions = Array.isArray(requestedState.keyDecisions)
             ? requestedState.keyDecisions.filter(item => typeof item === 'string' && item.trim()).map(item => item.trim().slice(0, 240)).slice(-20)
             : (Array.isArray(currentProject.keyDecisions) ? currentProject.keyDecisions : []);
         return {
             reply: typeof parsed.reply === 'string' ? parsed.reply.trim() : '',
-            projectState: { stage, keyDecisions }
+            projectState: { track, stage, trackStage: stage, keyDecisions }
         };
     } catch {
-        return { reply: '', projectState: { stage: ANIME_STAGES.includes(currentProject.stage) ? currentProject.stage : 'idea', keyDecisions: currentProject.keyDecisions || [] } };
+        const track = currentProject.track === '3d' ? '3d' : '2d';
+        const stages = track === '3d' ? ANIME_3D_STAGES : ANIME_STAGES;
+        const stage = stages.includes(currentProject.trackStage || currentProject.stage)
+            ? (currentProject.trackStage || currentProject.stage)
+            : 'idea';
+        return { reply: '', projectState: { track, stage, trackStage: stage, keyDecisions: currentProject.keyDecisions || [] } };
     }
 }
 
 async function handleAnimeTeach(message, userRef, projectId) {
     const project = await loadAnimeProject(userRef, projectId);
     const projectContext = JSON.stringify({
-        stage: project.data.stage || 'idea',
+        track: project.data.track || '2d',
+        stage: project.data.trackStage || project.data.stage || 'idea',
         keyDecisions: Array.isArray(project.data.keyDecisions) ? project.data.keyDecisions.slice(-20) : []
     });
     const systemPrompt = `${SYSTEM_PROMPT}\n\nMODE INSTRUCTIONS FOR THIS TURN (anime_teach):\n${MODE_INSTRUCTIONS.anime_teach}\n\n${ANIME_TEACH_PROMPT}`;
@@ -473,7 +506,9 @@ exports.handler = async (event) => {
         if (mode === 'anime_teach') {
             const animeResponse = await handleAnimeTeach(message, userRef, projectId);
             const projectUpdate = {
+                track: animeResponse.projectState.track,
                 stage: animeResponse.projectState.stage,
+                trackStage: animeResponse.projectState.trackStage,
                 keyDecisions: animeResponse.projectState.keyDecisions,
                 updatedAt: admin.firestore.FieldValue.serverTimestamp()
             };
