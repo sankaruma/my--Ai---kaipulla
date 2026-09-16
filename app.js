@@ -3,7 +3,7 @@
    ========================================================================== */
 
 // Global App State
-const GEMINI_API_KEY = '';
+const GEMINI_API_KEY = 'AQ.Ab8RN6LcIXoMfqQamgcLgMix08dRNVbnUtKy48U_n4vN74z4Sg';
 const state = {
     isUnlocked: false,
     isAuthenticated: false,
@@ -556,33 +556,75 @@ async function generateAiResponse(query, media) {
     chatList.insertAdjacentHTML('beforeend', typingHtml);
     chatList.scrollTop = chatList.scrollHeight;
 
-    let reply = '';
-    try {
-        const currentUser = typeof firebase !== 'undefined' && firebase.auth().currentUser;
-        if (!currentUser) throw new Error('Please sign in before chatting.');
-        const idToken = await currentUser.getIdToken();
-        const response = await fetch('/.netlify/functions/chat', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                Authorization: `Bearer ${idToken}`
-            },
-            body: JSON.stringify({
-                message: query || 'Analyze the attached media and give creative suggestions.',
-                projectId: state.chatMode === 'anime' ? state.animeProjectId : undefined,
-                sessionId: state.sessionId,
-                conversationHistory: historyForApi.map(msg => ({
-                    role: msg.role === 'model' ? 'assistant' : 'user',
-                    content: msg.parts[0].text
-                }))
-            })
-        });
-        const result = await response.json();
-        if (!response.ok) throw new Error(result.error || 'Chat request failed');
-        reply = result.reply || '';
-    } catch (error) {
-        console.error('[Chat Function]', error);
-        reply = 'Unable to reach Nizhal Thunai right now. Please try again.';
+    const userParts = [{ text: query || 'Analyze the attached media and give creative suggestions.' }];
+    if (media && media.url && media.url.startsWith('data:image')) {
+        userParts.push({ inlineData: { mimeType: media.type, data: media.url.split(',')[1] } });
+    } else if (media) {
+        userParts.push({ text: `[Attached media file: ${media.name}, type: ${media.type}]` });
+    }
+
+    const requestBody = {
+        contents: [
+            ...historyForApi,
+            { role: 'user', parts: userParts }
+        ],
+        systemInstruction: { parts: [{ text: systemPrompt }] },
+        generationConfig: { temperature: 1.8 },
+        tools: [
+            {
+                functionDeclarations: [
+                    {
+                        name: 'create_task',
+                        description: 'Creates a task or reminder note when the user explicitly asks to remember, note down, or be reminded of something.',
+                        parameters: {
+                            type: 'OBJECT',
+                            properties: {
+                                title: { type: 'STRING', description: 'Short task title' },
+                                details: { type: 'STRING', description: 'Extra context or details' },
+                                due: { type: 'STRING', description: 'Natural language due date/time if mentioned' }
+                            },
+                            required: ['title']
+                        }
+                    }
+                ]
+            }
+        ]
+    };
+
+    const res = await callGeminiApi(requestBody);
+    let reply = res.text || '';
+
+    // Check if model invoked Function Calling to auto-create a task
+    if (res.functionCall && res.functionCall.name === 'create_task') {
+        const args = res.functionCall.args || res.functionCall.parameters || {};
+        const title = args.title || 'New Task';
+        const details = args.details || '';
+        const due = args.due || '';
+
+        const newTask = {
+            id: Date.now(),
+            title: title,
+            name: title,
+            details: details,
+            due: due || null,
+            dueDate: due || null,
+            createdAt: new Date().toISOString(),
+            completed: false,
+            done: false
+        };
+
+        state.tasks.unshift(newTask);
+        saveDataToStorage('tasks', state.tasks);
+
+        if (state.currentView === 'view-tasks') {
+            renderTasksUI();
+        }
+
+        let taskNotice = `✅ Task added: "${title}"`;
+        if (due) taskNotice += ` (Due: ${due})`;
+        if (details) taskNotice += `\nDetails: ${details}`;
+
+        reply = reply ? `${taskNotice}\n\n${reply}` : taskNotice;
     }
 
     if (!reply) {
