@@ -1480,9 +1480,22 @@ async function callGeminiApi(requestBody, maxRetries = 3) {
                 }
             }
 
-            let response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${key}`, {
+            const headers = {
+                'Content-Type': 'application/json'
+            };
+
+            let url = '';
+            if (key.startsWith('AQ.')) {
+                headers['Authorization'] = `Bearer ${key}`;
+                headers['x-goog-api-key'] = key;
+                url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`;
+            } else {
+                url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${key}`;
+            }
+
+            let response = await fetch(url, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: headers,
                 body: JSON.stringify(payload)
             });
             let data = await response.json();
@@ -1497,9 +1510,9 @@ async function callGeminiApi(requestBody, maxRetries = 3) {
                 if (payload.generationConfig) {
                     delete payload.generationConfig.thinkingConfig;
                 }
-                response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${key}`, {
+                response = await fetch(url, {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
+                    headers: headers,
                     body: JSON.stringify(payload)
                 });
                 data = await response.json();
