@@ -51,43 +51,7 @@ const PROMPT_PRESETS = {
         { label: '🏔️ Fantasy World-Building', text: 'Describe a cyberpunk anime city built inside a giant floating monolith.' }
     ]
 };
-const MOBILE_FORMATTING_INSTRUCTION = `
-
-OUTPUT FORMAT RULES — MOBILE FRIENDLY:
-
-- Keep every option or section SHORT and punchy.
-- Prefer short phrases and short sentences over long explanations.
-- Avoid wall-of-text paragraphs.
-- Separate multiple options clearly with spacing.
-
-FORMAT:
-- Start each option/section with a short bold label/title.
-- Under each label, use only 2-4 short lines.
-- Leave a blank line between separate options/sections.
-- Use compact bullet points when useful.
-- Do not combine all options into one continuous paragraph.
-
-REMOVE FLUFF:
-- Do not restate the user's request.
-- Do not add filler such as "Here are your options", "Sure", "Of course", etc.
-- Do not add unnecessary introductions.
-- Do not add a closing summary paragraph.
-- Give the actual useful content directly.
-
-BGM & SOUND EFFECTS GUIDE:
-- Keep this section to a maximum of 2-3 short lines.
-- Mention only the most useful BGM/SFX suggestion and where it fits.
-
-"WHERE TO FIND IT":
-- Keep this section to a maximum of 2-3 short lines.
-- Give only the most useful search/source guidance.
-- Do not provide a long detailed explanation.
-
-OVERALL LENGTH:
-- The complete answer should feel comfortable to scan on a mobile phone.
-- Prefer roughly one phone-screen scroll rather than multiple screens.
-- Keep the answer concise without removing important creative ideas.
-- Preserve multiple options and useful details, but compress unnecessary explanation.`;
+const MOBILE_FORMATTING_INSTRUCTION = ` Keep the reply SHORT and scannable on a phone screen - a few punchy lines per section, no long paragraphs. No filler preamble like 'Here are your options' and no closing summary. Just the content, cleanly formatted with clear line breaks between sections.`;
 
 // ==========================================================================
 // 1. INITIALIZATION & LIFECYCLE
