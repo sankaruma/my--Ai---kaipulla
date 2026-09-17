@@ -3,7 +3,7 @@
    ========================================================================== */
 
 // Global App State
-const GEMINI_API_KEY = 'AQ.Ab8RN6LcIXoMfqQamgcLgMix08dRNVbnUtKy48U_n4vN74z4Sg';
+const GEMINI_API_KEY = "";
 const state = {
     isUnlocked: false,
     isAuthenticated: false,
@@ -1458,8 +1458,8 @@ function getGeminiApiKey() {
 
 async function callGeminiApi(requestBody, maxRetries = 3) {
     const key = getGeminiApiKey();
-    // Supported Gemini Flash models in order of priority (primary: gemini-2.5-flash / gemini-flash-latest, fallback: gemini-2.0-flash)
-    const models = ['gemini-2.5-flash', 'gemini-flash-latest', 'gemini-2.0-flash'];
+    // Supported Gemini Flash models in order of priority
+    const models = ['gemini-2.0-flash', 'gemini-1.5-flash'];
     let modelIndex = 0;
 
     for (let attempt = 0; attempt <= maxRetries; attempt++) {
