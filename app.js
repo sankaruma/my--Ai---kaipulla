@@ -136,8 +136,29 @@ function initFirebaseAuth() {
 function initPwaServiceWorker() {
     if ('serviceWorker' in navigator) {
         navigator.serviceWorker.register('./sw.js')
-            .then(reg => console.log('[PWA] Service Worker registered:', reg.scope))
+            .then(reg => {
+                console.log('[PWA] Service Worker registered:', reg.scope);
+                reg.addEventListener('updatefound', () => {
+                    const newWorker = reg.installing;
+                    if (newWorker) {
+                        newWorker.addEventListener('statechange', () => {
+                            if (newWorker.state === 'installed' && navigator.serviceWorker.controller) {
+                                console.log('[PWA] New version available! Reloading for update...');
+                                window.location.reload();
+                            }
+                        });
+                    }
+                });
+            })
             .catch(err => console.log('[PWA] Service Worker registration failed:', err));
+
+        let refreshing = false;
+        navigator.serviceWorker.addEventListener('controllerchange', () => {
+            if (!refreshing) {
+                refreshing = true;
+                window.location.reload();
+            }
+        });
     }
 
     window.addEventListener('beforeinstallprompt', (e) => {
@@ -561,7 +582,11 @@ YOUR PRIMARY JOB IS TO TRIGGER AND EXPAND THE USER'S CREATIVITY FIRST.
             { role: 'user', parts: userParts }
         ],
         systemInstruction: { parts: [{ text: systemPrompt }] },
-        generationConfig: { temperature: 1.8 },
+        generationConfig: {
+            temperature: 0.9,
+            presencePenalty: 0.6,
+            frequencyPenalty: 0.5
+        },
         tools: [
             {
                 functionDeclarations: [
@@ -1238,11 +1263,15 @@ async function generateContentIdea() {
     }
     if (parts.length === 0) parts.push({ text: 'Give me a creative idea.' });
 
-    const ideaTemp = state.ideaMode === 'dialogueid' ? 0.6 : 1.8;
+    const ideaTemp = state.ideaMode === 'dialogueid' ? 0.6 : 0.9;
     const requestBody = {
         contents: [{ parts }],
         systemInstruction: { parts: [{ text: systemPrompt }] },
-        generationConfig: { temperature: ideaTemp }
+        generationConfig: {
+            temperature: ideaTemp,
+            presencePenalty: 0.6,
+            frequencyPenalty: 0.5
+        }
     };
 
     const res = await callGeminiApi(requestBody);
@@ -1429,8 +1458,8 @@ function getGeminiApiKey() {
 
 async function callGeminiApi(requestBody, maxRetries = 3) {
     const key = getGeminiApiKey();
-    // Supported Gemini Flash models in order of priority (primary: gemini-2.5-flash / gemini-flash-latest, fallback: gemini-3.6-flash / gemini-2.0-flash)
-    const models = ['gemini-2.5-flash', 'gemini-flash-latest', 'gemini-3.6-flash', 'gemini-2.0-flash'];
+    // Supported Gemini Flash models in order of priority (primary: gemini-2.5-flash / gemini-flash-latest, fallback: gemini-2.0-flash)
+    const models = ['gemini-2.5-flash', 'gemini-flash-latest', 'gemini-2.0-flash'];
     let modelIndex = 0;
 
     for (let attempt = 0; attempt <= maxRetries; attempt++) {
@@ -1438,11 +1467,14 @@ async function callGeminiApi(requestBody, maxRetries = 3) {
         try {
             // Clone requestBody to avoid mutating original object across retries
             const payload = JSON.parse(JSON.stringify(requestBody));
+            payload.generationConfig = payload.generationConfig || {};
+            if (payload.generationConfig.temperature === undefined) payload.generationConfig.temperature = 0.9;
+            if (payload.generationConfig.presencePenalty === undefined) payload.generationConfig.presencePenalty = 0.6;
+            if (payload.generationConfig.frequencyPenalty === undefined) payload.generationConfig.frequencyPenalty = 0.5;
 
             // Default Thinking Mode: include thinkingConfig for models supporting thinking ('gemini-2.5-flash' or 'gemini-flash-latest')
             const supportsThinking = (model === 'gemini-2.5-flash' || model === 'gemini-flash-latest');
             if (supportsThinking) {
-                payload.generationConfig = payload.generationConfig || {};
                 if (!payload.generationConfig.thinkingConfig) {
                     payload.generationConfig.thinkingConfig = { thinkingLevel: 'high' };
                 }

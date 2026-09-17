@@ -2,7 +2,7 @@
    NIZHAL THUNAI - SERVICE WORKER (PWA Offline & Push Notifications)
    ========================================================================== */
 
-const CACHE_NAME = 'nizhal-thunai-v7';
+const CACHE_NAME = 'nizhal-thunai-v8';
 const ASSETS_TO_CACHE = [
     './',
     './index.html',
