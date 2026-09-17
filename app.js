@@ -3,7 +3,7 @@
    ========================================================================== */
 
 // Global App State
-const GEMINI_API_KEY = "";
+const GEMINI_API_KEY = "AQ.Ab8RN6KVdtbpLs8CjFwNdFsgXgd45KeJ7QKQMMGdJWBv4hXqfQ";
 const state = {
     isUnlocked: false,
     isAuthenticated: false,
