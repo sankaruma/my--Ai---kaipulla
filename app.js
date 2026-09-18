@@ -3,7 +3,7 @@
    ========================================================================== */
 
 // Global App State
-const GEMINI_API_KEY = "AQ.Ab8RN6KVdtbpLs8CjFwNdFsgXgd45KeJ7QKQMMGdJWBv4hXqfQ";
+const GEMINI_API_KEY = "";
 const state = {
     isUnlocked: false,
     isAuthenticated: false,
@@ -1458,8 +1458,7 @@ function getGeminiApiKey() {
 
 async function callGeminiApi(requestBody, maxRetries = 3) {
     const key = getGeminiApiKey();
-    // Supported Gemini Flash models in order of priority
-    const models = ['gemini-2.0-flash', 'gemini-1.5-flash'];
+    const models = ['gemini-2.5-flash', 'gemini-2.5-flash-lite', 'gemini-flash-latest'];
     let modelIndex = 0;
 
     for (let attempt = 0; attempt <= maxRetries; attempt++) {
@@ -1594,6 +1593,22 @@ function openApiKeyModal() {
     }
 }
 
+function saveGeminiKeyFromInput() {
+    const input = document.getElementById('geminiKeyInput');
+    const status = document.getElementById('geminiKeyStatus');
+    const trimmed = input ? input.value.trim() : '';
+
+    if (trimmed) {
+        localStorage.setItem('nizhal_gemini_api_key', trimmed);
+        if (status) status.innerText = 'Gemini API key saved successfully.';
+    } else {
+        localStorage.removeItem('nizhal_gemini_api_key');
+        if (status) status.innerText = 'Gemini API key removed.';
+    }
+
+    updateApiKeyBadge();
+}
+
 function resetApiKeyToDefault() {
     localStorage.removeItem('nizhal_gemini_api_key');
     alert('🔄 Reset to default Gemini API Key.');
@@ -1602,14 +1617,20 @@ function resetApiKeyToDefault() {
 
 function updateApiKeyBadge() {
     const badge = document.getElementById('apiKeyStatusBadge');
+    const input = document.getElementById('geminiKeyInput');
+    const custom = localStorage.getItem('nizhal_gemini_api_key');
+
+    if (input) input.value = custom || '';
     if (badge) {
-        const custom = localStorage.getItem('nizhal_gemini_api_key');
         if (custom) {
             badge.className = 'badge badge-green';
             badge.innerText = 'Active: Custom User Key';
-        } else {
+        } else if (GEMINI_API_KEY) {
             badge.className = 'badge badge-purple';
             badge.innerText = 'Active: Default Key';
+        } else {
+            badge.className = 'badge badge-purple';
+            badge.innerText = 'No API key set - add one in Settings';
         }
     }
 }
