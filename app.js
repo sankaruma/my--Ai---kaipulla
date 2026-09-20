@@ -583,9 +583,7 @@ YOUR PRIMARY JOB IS TO TRIGGER AND EXPAND THE USER'S CREATIVITY FIRST.
         ],
         systemInstruction: { parts: [{ text: systemPrompt }] },
         generationConfig: {
-            temperature: 0.9,
-            presencePenalty: 0.6,
-            frequencyPenalty: 0.5
+            temperature: 0.9
         },
         tools: [
             {
@@ -1268,9 +1266,7 @@ async function generateContentIdea() {
         contents: [{ parts }],
         systemInstruction: { parts: [{ text: systemPrompt }] },
         generationConfig: {
-            temperature: ideaTemp,
-            presencePenalty: 0.6,
-            frequencyPenalty: 0.5
+            temperature: ideaTemp
         }
     };
 
