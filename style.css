@@ -735,6 +735,29 @@ body.dark-theme {
     display: none;
 }
 
+.friendly-error-toast {
+    position: fixed;
+    left: 50%;
+    bottom: 1.25rem;
+    z-index: 100;
+    max-width: min(90vw, 420px);
+    padding: 0.7rem 1rem;
+    border: 1px solid var(--border-glass);
+    border-radius: var(--radius-lg);
+    background: var(--bg-card);
+    color: var(--text-bright);
+    box-shadow: 0 10px 28px rgba(18, 18, 18, 0.2);
+    opacity: 0;
+    pointer-events: none;
+    transform: translate(-50%, 0.5rem);
+    transition: opacity 180ms ease, transform 180ms ease;
+}
+
+.friendly-error-toast.visible {
+    opacity: 1;
+    transform: translate(-50%, 0);
+}
+
 .icon-btn-mic {
     width: 38px;
     height: 38px;

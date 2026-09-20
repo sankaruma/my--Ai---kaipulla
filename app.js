@@ -66,12 +66,43 @@ document.addEventListener('DOMContentLoaded', () => {
     initFirebaseAuth();
     setupReminderNotificationChecker();
     setupToolsMenu();
+    setupGlobalErrorHandlers();
     renderPromptSuggestions();
     renderChatHistoryUI();
     updateApiKeyBadge();
     
     lockApp();
 });
+
+function redactError(error) {
+    const message = error instanceof Error ? error.message : String(error || 'Unknown error');
+    return message.replace(/([?&]key=)[^&\s]+/gi, '$1[REDACTED]').replace(/AIza[\w-]+/g, '[REDACTED]');
+}
+
+function showFriendlyToast(message) {
+    let toast = document.getElementById('friendlyErrorToast');
+    if (!toast) {
+        toast = document.createElement('div');
+        toast.id = 'friendlyErrorToast';
+        toast.className = 'friendly-error-toast';
+        document.body.appendChild(toast);
+    }
+    toast.textContent = message;
+    toast.classList.add('visible');
+    clearTimeout(toast._hideTimer);
+    toast._hideTimer = setTimeout(() => toast.classList.remove('visible'), 5000);
+}
+
+function setupGlobalErrorHandlers() {
+    window.addEventListener('error', event => {
+        console.warn('[Global Error]', redactError(event.error || event.message));
+        showFriendlyToast('Konjam busy-ah irukku, thirumba try panren...');
+    });
+    window.addEventListener('unhandledrejection', event => {
+        console.warn('[Unhandled Promise]', redactError(event.reason));
+        showFriendlyToast('Konjam busy-ah irukku, thirumba try panren...');
+    });
+}
 
 function initFirebaseAuth() {
     const status = document.getElementById('firebaseAuthStatus');
@@ -97,27 +128,19 @@ function initFirebaseAuth() {
         if (emailForm) {
             emailForm.addEventListener('submit', async event => {
                 event.preventDefault();
-                const email = document.getElementById('firebaseEmailInput').value.trim();
-                const password = document.getElementById('firebasePasswordInput').value;
-                if (!email || !password) return;
                 if (status) status.innerText = 'Signing in...';
                 try {
                     await firebase.auth().signInWithEmailAndPassword(email, password);
                 } catch (error) {
                     if (error.code === 'auth/user-not-found') {
-                        try {
                             await firebase.auth().createUserWithEmailAndPassword(email, password);
                         } catch (createError) {
                             if (status) status.innerText = createError.message;
                         }
                     } else if (status) {
-                        status.innerText = error.message;
                     }
                 }
             });
-        }
-
-        const googleButton = document.getElementById('firebaseGoogleAuthBtn');
         if (googleButton) {
             googleButton.addEventListener('click', async () => {
                 if (status) status.innerText = 'Opening Google sign-in...';
@@ -510,7 +533,42 @@ function sendChatMessage() {
     }, 650);
 }
 
+function restoreChatInput(text) {
+    const input = document.getElementById('chatInput');
+    if (input && text) {
+        input.value = text;
+        handleTypingLanguageDetection();
+    }
+}
+
+function showChatFailure(typingId, message) {
+    const chatList = document.getElementById('chatMessageList');
+    const typingEl = typingId ? document.getElementById(typingId) : null;
+    if (typingEl) typingEl.remove();
+    if (!chatList) return;
+    chatList.insertAdjacentHTML('beforeend', `
+        <div class="message msg-ai">
+            <div class="msg-avatar"><i class="fa-solid fa-user-ninja"></i></div>
+            <div class="msg-body glass-card"><p>${escapeHtml(message)}</p></div>
+        </div>
+    `);
+    chatList.scrollTop = chatList.scrollHeight;
+}
+
 async function generateAiResponse(query, media) {
+    try {
+        await generateAiResponseInternal(query, media);
+    } catch (error) {
+        console.warn('[Home Chat] Unexpected failure:', redactError(error));
+        restoreChatInput(query);
+        const typingEl = document.querySelector('#chatMessageList .typing-indicator')?.closest('.message');
+        if (typingEl) typingEl.remove();
+        showFriendlyToast('Ippo mudiyala, konjam kazhichi try pannunga');
+        showChatFailure(null, 'Ippo mudiyala, konjam kazhichi try pannunga');
+    }
+}
+
+async function generateAiResponseInternal(query, media) {
     const chatList = document.getElementById('chatMessageList');
     const timeNow = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
     const lang = state.activeLanguage;
@@ -619,7 +677,16 @@ YOUR PRIMARY JOB IS TO TRIGGER AND EXPAND THE USER'S CREATIVITY FIRST.
         ]
     };
 
-    const res = await callGeminiApi(requestBody);
+    let res;
+    try {
+        res = await callGeminiWithFriendlyRetry(requestBody);
+    } catch (error) {
+        console.warn('[Home Chat] Gemini request failed:', redactError(error), { status: error.status, model: error.model });
+        showFriendlyToast('Ippo mudiyala, konjam kazhichi try pannunga');
+        restoreChatInput(query);
+        showChatFailure(typingId, 'Ippo mudiyala, konjam kazhichi try pannunga');
+        return;
+    }
     let reply = res.text || '';
 
     // Check if model invoked Function Calling to auto-create a task
@@ -683,7 +750,7 @@ YOUR PRIMARY JOB IS TO TRIGGER AND EXPAND THE USER'S CREATIVITY FIRST.
 
     if (state.voiceSpeechEnabled) {
         speakWithGeminiTTS(reply).catch(error => {
-                console.warn('[Gemini TTS] Falling back to browser speech:', error);
+                console.warn('[Gemini TTS] Falling back to browser speech:', redactError(error));
                 if ('speechSynthesis' in window) {
                     const utterance = new SpeechSynthesisUtterance(reply);
                     window.speechSynthesis.speak(utterance);
@@ -1349,25 +1416,30 @@ async function generateContentIdea() {
         }
     };
 
-    const res = await callGeminiApi(requestBody);
-    const reply = res.text;
+    try {
+        const res = await callGeminiWithFriendlyRetry(requestBody);
+        const reply = res.text;
 
-    btn.disabled = false;
-    btn.innerHTML = originalBtnHtml;
+        const newIdea = {
+            id: Date.now(),
+            mode: state.ideaMode,
+            context: context || `Media: ${state.ideaMedia ? state.ideaMedia.name : 'N/A'}`,
+            result: reply,
+            time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+        };
+        state.contentIdeas.unshift(newIdea);
+        await saveDataToStorage('ideas', state.contentIdeas);
+        renderIdeasHistoryUI();
 
-    const newIdea = {
-        id: Date.now(),
-        mode: state.ideaMode,
-        context: context || `Media: ${state.ideaMedia ? state.ideaMedia.name : 'N/A'}`,
-        result: reply,
-        time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-    };
-    state.contentIdeas.unshift(newIdea);
-    saveDataToStorage('ideas', state.contentIdeas);
-    renderIdeasHistoryUI();
-
-    if (contextInput) contextInput.value = '';
-    removeIdeaMedia();
+        if (contextInput) contextInput.value = '';
+        removeIdeaMedia();
+    } catch (error) {
+        console.warn('[Content Ideas] Gemini request failed:', redactError(error), { status: error.status, model: error.model });
+        showFriendlyToast('Ippo mudiyala, konjam kazhichi try pannunga');
+    } finally {
+        btn.disabled = false;
+        btn.innerHTML = originalBtnHtml;
+    }
 }
 
 function renderIdeasHistoryUI() {
@@ -1407,21 +1479,21 @@ function deleteContentIdea(id) {
 // 9. DATA STORAGE (FIREBASE FIRESTORE + LOCALSTORAGE FALLBACK)
 // ==========================================================================
 function loadStoredData() {
-    state.notes = JSON.parse(localStorage.getItem('nizhal_notes')) || [
+    state.notes = parseStoredJson(localStorage.getItem('nizhal_notes'), null) || [
         { id: 1, title: 'Reels Hook Reference', category: 'ideas', body: '3 viral opening hooks for tech & AI reviews.', time: 'Today' },
         { id: 2, title: 'Anime Power System Note', category: 'reference', body: 'Shadow Core resonance rules and energy caps.', time: 'Yesterday' }
     ];
 
-    state.tasks = JSON.parse(localStorage.getItem('nizhal_tasks')) || [
+    state.tasks = parseStoredJson(localStorage.getItem('nizhal_tasks'), null) || [
         { id: 1, name: 'Record 30-sec Insta Reel on AI Voice', dueDate: '2026-07-28', completed: false },
         { id: 2, name: 'Outline Episode 1 of Anime Story Draft', dueDate: '2026-07-30', completed: true }
     ];
 
-    state.drafts = JSON.parse(localStorage.getItem('nizhal_drafts')) || [
+    state.drafts = parseStoredJson(localStorage.getItem('nizhal_drafts'), null) || [
         { id: 1, title: 'Chapter 1: The Shadow Monolith', body: 'The sky over Sector 7 burned in electric cyan...', updatedAt: new Date().toISOString() }
     ];
 
-    state.contentIdeas = JSON.parse(localStorage.getItem('nizhal_ideas')) || [];
+    state.contentIdeas = parseStoredJson(localStorage.getItem('nizhal_ideas'), []) || [];
 
     localStorage.removeItem('nizhal_chat');
     state.chatHistory = { insta: [], anime: [] };
@@ -1445,7 +1517,7 @@ async function initSupabaseIfConfigured() {
     const configStr = localStorage.getItem('nizhal_supabase_config');
     if (configStr) {
         try {
-            const config = JSON.parse(configStr);
+            const config = parseStoredJson(configStr, null);
             if (config.url && config.anonKey && typeof supabase !== 'undefined') {
                 state.supabaseClient = supabase.createClient(config.url, config.anonKey);
                 state.usingSupabase = true;
@@ -1529,6 +1601,110 @@ function saveFirebaseConfig() {
 
 function getGeminiApiKey() {
     return localStorage.getItem('nizhal_gemini_api_key') || GEMINI_API_KEY;
+}
+
+const GEMINI_MODEL_CACHE_KEY = 'nizhal_gemini_models';
+const GEMINI_MODEL_CACHE_TTL = 24 * 60 * 60 * 1000;
+let geminiModelsPromise = null;
+const deadGeminiModels = new Set();
+
+function parseStoredJson(value, fallback) {
+    if (!value) return fallback;
+    try {
+        const parsed = JSON.parse(value);
+        return parsed === null || parsed === undefined ? fallback : parsed;
+    } catch (error) {
+        console.warn('[Storage] Invalid JSON ignored:', redactError(error));
+        return fallback;
+    }
+}
+
+function getModelId(modelName) {
+    return String(modelName || '').replace(/^models\//, '');
+}
+
+function sortGeminiModels(models) {
+    return models.sort((a, b) => {
+        const aVersion = (getModelId(a).match(/gemini-(\d+(?:\.\d+)?)/i) || [0, '0'])[1];
+        const bVersion = (getModelId(b).match(/gemini-(\d+(?:\.\d+)?)/i) || [0, '0'])[1];
+        const versionOrder = Number(bVersion) - Number(aVersion);
+        if (versionOrder) return versionOrder;
+
+        const aPreview = /preview|experimental|exp/i.test(a);
+        const bPreview = /preview|experimental|exp/i.test(b);
+        if (aPreview !== bPreview) return aPreview ? 1 : -1;
+        return a.localeCompare(b);
+    });
+}
+
+function filterGeminiModels(models) {
+    const excluded = /image|audio|tts|live|embedding|thinking/i;
+    return sortGeminiModels(models
+        .filter(model => model && model.name && Array.isArray(model.supportedGenerationMethods))
+        .filter(model => model.supportedGenerationMethods.includes('generateContent'))
+        .map(model => getModelId(model.name))
+        .filter(name => /flash/i.test(name) && !excluded.test(name)));
+}
+
+async function getGeminiModels() {
+    if (geminiModelsPromise) return geminiModelsPromise;
+
+    geminiModelsPromise = (async () => {
+        const fallback = ['gemini-flash-latest'];
+        const cached = parseStoredJson(localStorage.getItem(GEMINI_MODEL_CACHE_KEY), null);
+        if (cached && Array.isArray(cached.models) && cached.fetchedAt && Date.now() - cached.fetchedAt < GEMINI_MODEL_CACHE_TTL) {
+            const cachedModels = filterGeminiModels(cached.models.map(name => ({
+                name,
+                supportedGenerationMethods: ['generateContent']
+            })));
+            return cachedModels.length ? cachedModels : fallback;
+        }
+
+        try {
+            const key = getGeminiApiKey();
+            const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${encodeURIComponent(key)}`);
+            const data = await response.json();
+            if (!response.ok) throw new Error(`Model discovery failed (${response.status})`);
+            const models = filterGeminiModels(data.models || []);
+            if (!models.length) throw new Error('Model discovery returned no usable models');
+            try {
+                localStorage.setItem(GEMINI_MODEL_CACHE_KEY, JSON.stringify({ fetchedAt: Date.now(), models }));
+            } catch (error) {
+                console.warn('[Gemini Models] Cache write failed:', redactError(error));
+            }
+            return models;
+        } catch (error) {
+            console.warn('[Gemini Models] Discovery failed:', redactError(error));
+            return fallback;
+        }
+    })();
+
+    return geminiModelsPromise;
+}
+
+function createGeminiError(message, status, model) {
+    const error = new Error(message);
+    error.status = status;
+    error.model = model;
+    return error;
+}
+
+async function callGeminiWithFriendlyRetry(requestBody) {
+    try {
+        return await callGeminiApi(requestBody);
+    } catch (error) {
+        showFriendlyToast('Konjam busy-ah irukku, thirumba try panren...');
+        await new Promise(resolve => setTimeout(resolve, 8000));
+        try {
+            return await callGeminiApi(requestBody);
+        } catch (retryError) {
+            console.warn('[Gemini] Request failed after retry:', redactError(retryError), {
+                status: retryError.status,
+                model: retryError.model
+            });
+            throw retryError;
+        }
+    }
 }
 
 function base64ToBytes(base64) {
@@ -1628,120 +1804,120 @@ async function speakWithGeminiTTS(text) {
 
 async function callGeminiApi(requestBody, maxRetries = 3) {
     const key = getGeminiApiKey();
-    const models = ['gemini-2.5-flash', 'gemini-2.5-flash-lite', 'gemini-flash-latest'];
-    let modelIndex = 0;
-    let transientRetryCount = 0;
+    const models = await getGeminiModels();
 
-    for (let attempt = 0; attempt <= maxRetries || transientRetryCount < 2 || modelIndex < models.length - 1; attempt++) {
-        const model = models[modelIndex] || models[models.length - 1];
-        try {
-            // Clone requestBody to avoid mutating original object across retries
-            const payload = JSON.parse(JSON.stringify(requestBody));
-            payload.generationConfig = payload.generationConfig || {};
-            if (payload.generationConfig.temperature === undefined) payload.generationConfig.temperature = 0.9;
+    for (const model of models) {
+        if (deadGeminiModels.has(model)) continue;
+        let transientRetryCount = 0;
 
-            // Default Thinking Mode: include thinkingConfig for models supporting thinking ('gemini-2.5-flash' or 'gemini-flash-latest')
-            const supportsThinking = (model === 'gemini-2.5-flash' || model === 'gemini-flash-latest');
-            if (supportsThinking) {
-                if (!payload.generationConfig.thinkingConfig) {
-                    payload.generationConfig.thinkingConfig = { thinkingLevel: 'high' };
+        while (true) {
+            try {
+                // Clone requestBody to avoid mutating original object across retries
+                const payload = typeof structuredClone === 'function' ? structuredClone(requestBody) : JSON.parse(JSON.stringify(requestBody));
+                payload.generationConfig = payload.generationConfig || {};
+                if (payload.generationConfig.temperature === undefined) payload.generationConfig.temperature = 0.9;
+
+                // Default Thinking Mode: include thinkingConfig for models supporting thinking.
+                const supportsThinking = (model === 'gemini-2.5-flash' || model === 'gemini-flash-latest');
+                if (supportsThinking) {
+                    if (!payload.generationConfig.thinkingConfig) {
+                        payload.generationConfig.thinkingConfig = { thinkingLevel: 'high' };
+                    }
                 }
-            }
 
-            const headers = {
-                'Content-Type': 'application/json'
-            };
+                const headers = {
+                    'Content-Type': 'application/json'
+                };
 
-            const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${key}`;
+                const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(key)}`;
 
-            let response = await fetch(url, {
-                method: 'POST',
-                headers: headers,
-                body: JSON.stringify(payload)
-            });
-            let data = await response.json();
-
-            // If API returns an error specifically about thinkingConfig / thinkingLevel not supported, retry once without it
-            if (!response.ok && data.error?.message && (
-                data.error.message.includes('thinkingConfig') ||
-                data.error.message.includes('thinkingLevel') ||
-                data.error.message.includes('thinking')
-            )) {
-                console.warn(`[Gemini API] thinkingConfig not supported for model '${model}'. Retrying without thinkingConfig...`);
-                if (payload.generationConfig) {
-                    delete payload.generationConfig.thinkingConfig;
-                }
-                response = await fetch(url, {
+                let response = await fetch(url, {
                     method: 'POST',
                     headers: headers,
                     body: JSON.stringify(payload)
                 });
-                data = await response.json();
-            }
+                let data = await response.json();
 
-            if (response.ok && data.candidates?.[0]?.content?.parts) {
-                const parts = data.candidates[0].content.parts;
-                const funcCallPart = parts.find(p => p.functionCall);
-                const text = parts.map(p => p.text).filter(Boolean).join('\n');
-                if (funcCallPart || text) {
-                    return {
-                        success: true,
-                        text: text,
-                        functionCall: funcCallPart ? funcCallPart.functionCall : null,
-                        rawParts: parts
-                    };
+                // If API returns an error specifically about thinkingConfig / thinkingLevel not supported, retry once without it
+                if (!response.ok && data.error?.message && (
+                    data.error.message.includes('thinkingConfig') ||
+                    data.error.message.includes('thinkingLevel') ||
+                    data.error.message.includes('thinking')
+                )) {
+                    console.warn(`[Gemini API] thinkingConfig not supported for model '${model}'. Retrying without thinkingConfig...`);
+                    if (payload.generationConfig) {
+                        delete payload.generationConfig.thinkingConfig;
+                    }
+                    response = await fetch(url, {
+                        method: 'POST',
+                        headers: headers,
+                        body: JSON.stringify(payload)
+                    });
+                    data = await response.json();
                 }
-            }
 
-            // 404 Not Found / Deprecated model: immediately fall back to the next supported model without retrying the broken name
-            if (response.status === 404 || data.error?.code === 404 || (data.error?.message && data.error.message.toLowerCase().includes('not found'))) {
-                console.warn(`[Gemini API] Model '${model}' returned 404 Not Found. Falling back to next model...`);
-                if (modelIndex < models.length - 1) {
-                    modelIndex++;
-                    transientRetryCount = 0;
-                    continue;
+                if (response.ok && data.candidates?.[0]?.content?.parts) {
+                    const parts = data.candidates[0].content.parts;
+                    const funcCallPart = parts.find(p => p.functionCall);
+                    const text = parts.map(p => p.text).filter(Boolean).join('\n');
+                    if (funcCallPart || text) {
+                        return {
+                            success: true,
+                            text: text,
+                            functionCall: funcCallPart ? funcCallPart.functionCall : null,
+                            rawParts: parts
+                        };
+                    }
                 }
-            }
 
-            // 503 Overloaded or 429 Rate Limit: retry the same model twice before fallback
-            if (response.status === 503 || response.status === 429 || data.error?.code === 503 || data.error?.code === 429) {
-                const status = response.status || data.error?.code;
-                if (transientRetryCount < 2) {
-                    const delay = transientRetryCount === 0 ? 1500 : 3000;
-                    transientRetryCount++;
-                    console.warn(`[Gemini API] Received ${status} for model '${model}'. Retrying same model in ${delay}ms...`, data);
-                    await new Promise(r => setTimeout(r, delay));
-                    continue;
+                const errorStatus = response.status >= 400 ? response.status : data.error?.code;
+                if (errorStatus === 404 || (data.error?.message && data.error.message.toLowerCase().includes('not found'))) {
+                    deadGeminiModels.add(model);
+                    console.warn(`[Gemini API] Model '${model}' returned 404; trying the next detected model.`);
+                    break;
                 }
-                if (modelIndex < models.length - 1) {
-                    modelIndex++;
-                    transientRetryCount = 0;
-                    continue;
-                }
-                if (status === 503) {
-                    return { success: false, text: '⚠️ Google Gemini server temporary-ah overloaded-ah irukku (503). Oru 1-2 minutes wait pannitu thirumba try pannunga bro!' };
-                }
-                if (status === 429) {
-                    return { success: false, text: '⚠️ Gemini API Free Daily Quota / Rate limit reach aayiduchu (429). aistudio.google.com-la pudhu API key create panni Settings-la podunga!' };
-                }
-            }
 
-            if (data.error?.message) {
-                return { success: false, text: `⚠️ Gemini Error (${data.error.code || response.status}): ${data.error.message}` };
+                if (errorStatus === 503 || errorStatus === 429) {
+                    const status = errorStatus;
+                    if (transientRetryCount < 2) {
+                        const delay = transientRetryCount === 0 ? 1500 : 3000;
+                        transientRetryCount++;
+                        console.warn(`[Gemini API] Received ${status} for model '${model}'. Retrying same model in ${delay}ms.`);
+                        await new Promise(resolve => setTimeout(resolve, delay));
+                        continue;
+                    }
+                    console.warn(`[Gemini API] Model '${model}' exhausted ${status} retries; trying the next detected model.`);
+                    break;
+                }
+
+                if (data.error?.message) {
+                    throw createGeminiError(`Gemini request failed (${response.status || data.error.code || 'unknown'})`, response.status || data.error.code, model);
+                }
+                throw createGeminiError(`Gemini model '${model}' returned no usable content`, response.status, model);
+            } catch (err) {
+                if (err.status === 404) {
+                    deadGeminiModels.add(model);
+                    console.warn(`[Gemini API] Model '${model}' returned 404; trying the next detected model.`);
+                    break;
+                }
+                if (err.status === 429 || err.status === 503) {
+                    if (transientRetryCount < 2) {
+                        const delay = transientRetryCount === 0 ? 1500 : 3000;
+                        transientRetryCount++;
+                        console.warn(`[Gemini API] Model '${model}' returned ${err.status}; retry ${transientRetryCount}/2 in ${delay}ms.`);
+                        await new Promise(resolve => setTimeout(resolve, delay));
+                        continue;
+                    }
+                    console.warn(`[Gemini API] Model '${model}' exhausted ${err.status} retries; trying the next detected model.`);
+                    break;
+                }
+                console.warn(`[Gemini API] Model '${model}' failed:`, redactError(err));
+                break;
+                }
             }
-        } catch (err) {
-            console.error('[Gemini API network error]', err);
-            if (modelIndex < models.length - 1) {
-                modelIndex++;
-            }
-            if (attempt < maxRetries) {
-                await new Promise(r => setTimeout(r, 1200));
-                continue;
-            }
-        }
     }
 
-    return { success: false, text: 'Network error bro, check your internet connection and try again!' };
+            throw createGeminiError('All detected Gemini models failed.');
 }
 
 function openApiKeyModal() {
