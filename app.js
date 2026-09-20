@@ -581,6 +581,16 @@ function showChatFailure(typingId, message) {
     chatList.scrollTop = chatList.scrollHeight;
 }
 
+function showAppTokenRequired() {
+    showFriendlyToast('App token set pannala, Settings-la podunga.');
+    switchView('view-settings');
+    const input = document.getElementById('geminiKeyInput');
+    if (input) {
+        input.focus();
+        input.select();
+    }
+}
+
 async function generateAiResponse(query, media) {
     try {
         await generateAiResponseInternal(query, media);
@@ -712,6 +722,12 @@ YOUR PRIMARY JOB IS TO TRIGGER AND EXPAND THE USER'S CREATIVITY FIRST.
     } catch (error) {
         console.warn('[Home Chat] Gemini request failed:', redactError(error), { status: error.status, model: error.model });
         voiceRequestPending = false;
+        if (error.code === 'bad_app_token') {
+            showAppTokenRequired();
+            restoreChatInput(query);
+            showChatFailure(typingId, 'App token set pannala, Settings-la podunga.');
+            return;
+        }
         showFriendlyToast('Ippo mudiyala, konjam kazhichi try pannunga');
         restoreChatInput(query);
         showChatFailure(typingId, 'Ippo mudiyala, konjam kazhichi try pannunga');
@@ -1535,6 +1551,10 @@ async function generateContentIdea() {
         removeIdeaMedia();
     } catch (error) {
         console.warn('[Content Ideas] Gemini request failed:', redactError(error), { status: error.status, model: error.model });
+        if (error.code === 'bad_app_token') {
+            showAppTokenRequired();
+            return;
+        }
         showFriendlyToast('Ippo mudiyala, konjam kazhichi try pannunga');
     } finally {
         btn.disabled = false;
@@ -1721,6 +1741,8 @@ async function callGeminiWithFriendlyRetry(requestBody) {
     try {
         return await callGeminiApi(requestBody);
     } catch (error) {
+        const retryable = error.status === 429 || error.status === 503 || error.code === 'provider_timeout';
+        if (!retryable) throw error;
         showFriendlyToast('Konjam busy-ah irukku, thirumba try panren...');
         await new Promise(resolve => setTimeout(resolve, 8000));
         try {
@@ -1761,6 +1783,7 @@ async function callGeminiApi(requestBody) {
     if (!response.ok || data.error) {
         const error = new Error(data.error || `AI proxy failed (${response.status})`);
         error.status = response.status;
+        error.code = data.error;
         throw error;
     }
     return data;

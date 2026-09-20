@@ -169,7 +169,7 @@ exports.handler = async (event) => {
     if (event.httpMethod === 'OPTIONS') return jsonResponse({}, 204);
     if (event.httpMethod !== 'POST') return jsonResponse({ error: 'method_not_allowed' }, 405);
     if (!process.env.APP_TOKEN || event.headers?.['x-app-token'] !== process.env.APP_TOKEN) {
-        return jsonResponse({ error: 'unauthorized' }, 401);
+        return jsonResponse({ error: 'bad_app_token' }, 401);
     }
 
     const now = Date.now();
