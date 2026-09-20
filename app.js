@@ -1483,14 +1483,7 @@ async function callGeminiApi(requestBody, maxRetries = 3) {
                 'Content-Type': 'application/json'
             };
 
-            let url = '';
-            if (key.startsWith('AQ.')) {
-                headers['Authorization'] = `Bearer ${key}`;
-                headers['x-goog-api-key'] = key;
-                url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`;
-            } else {
-                url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${key}`;
-            }
+            const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${key}`;
 
             let response = await fetch(url, {
                 method: 'POST',
