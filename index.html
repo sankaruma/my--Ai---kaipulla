@@ -138,25 +138,33 @@
 
                     <!-- Chat Input Controls Bar -->
                     <div class="chat-input-bar glass-card">
-                        <!-- Media File Upload Input Button -->
-                        <label for="mediaUploadInput" class="icon-btn-upload" title="Upload Image or Video for AI Analysis">
-                            <i class="fa-solid fa-paperclip"></i>
+                        <!-- Tools Menu Trigger -->
+                        <div class="tools-menu-container">
+                            <button type="button" class="icon-btn-upload" title="Open chat tools" onclick="toggleToolsMenu(event)">
+                                <i class="fa-solid fa-paperclip"></i>
+                            </button>
+                            <div class="tools-menu" id="toolsMenu" role="menu" aria-hidden="true">
+                                <button type="button" class="tools-menu-item" role="menuitem" onclick="selectToolsMenuItem('attach')">
+                                    <i class="fa-solid fa-camera"></i>
+                                    <span>Attach Photo/Video</span>
+                                </button>
+                                <button type="button" class="tools-menu-item" role="menuitem" onclick="selectToolsMenuItem('coach')">
+                                    <i class="fa-solid fa-lightbulb"></i>
+                                    <span>Coach Mode</span>
+                                    <i class="fa-solid fa-check tools-menu-check" id="toolsCoachCheck"></i>
+                                </button>
+                                <button type="button" class="tools-menu-item" role="menuitem" onclick="selectToolsMenuItem('wake')">
+                                    <i class="fa-solid fa-ear-listen"></i>
+                                    <span>Hey Pokki (Wake Word)</span>
+                                    <i class="fa-solid fa-check tools-menu-check" id="toolsWakeCheck"></i>
+                                </button>
+                            </div>
                             <input type="file" id="mediaUploadInput" accept="image/*,video/*" onchange="handleMediaUpload(event)">
-                        </label>
+                        </div>
 
                         <!-- Voice Mic Button (Web Speech API) -->
                         <button class="icon-btn-mic" id="micBtn" title="Speak to input text" onclick="toggleVoiceRecording()">
                             <i class="fa-solid fa-microphone"></i>
-                        </button>
-
-                        <!-- Hey Pokki Wake-Word Toggle -->
-                        <button class="icon-btn wake-word-btn" id="wakeWordBtn" title="Hey Pokki wake-word listening" onclick="toggleWakeWordListening()">
-                            <i class="fa-solid fa-ear-listen"></i>
-                        </button>
-
-                        <!-- Coach Mode Toggle -->
-                        <button class="icon-btn" title="Coach Mode - AI asks questions instead of giving full ideas" onclick="toggleCoachMode()">
-                            <i class="fa-solid fa-lightbulb text-dim" id="coachModeToggleIcon"></i>
                         </button>
 
                         <!-- Text Input -->

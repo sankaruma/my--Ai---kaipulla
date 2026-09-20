@@ -73,6 +73,7 @@ document.addEventListener('DOMContentLoaded', () => {
     initWebSpeechRecognition();
     initFirebaseAuth();
     setupReminderNotificationChecker();
+    setupToolsMenu();
     renderPromptSuggestions();
     renderChatHistoryUI();
     updateApiKeyBadge();
@@ -763,6 +764,61 @@ let wakeWordRecognitionInstance = null;
 let wakeWordRestartTimer = null;
 let wakeWordStarting = false;
 let wakeWordCommandTimer = null;
+
+function setupToolsMenu() {
+    document.addEventListener('click', event => {
+        if (!event.target.closest('.tools-menu-container')) closeToolsMenu();
+    });
+    updateToolsMenuState();
+}
+
+function updateToolsMenuState() {
+    const coachItem = document.querySelector('.tools-menu-item[onclick="selectToolsMenuItem(\'coach\')"]');
+    const wakeItem = document.querySelector('.tools-menu-item[onclick="selectToolsMenuItem(\'wake\')"]');
+    const coachCheck = document.getElementById('toolsCoachCheck');
+    const wakeCheck = document.getElementById('toolsWakeCheck');
+
+    if (coachItem) coachItem.classList.toggle('active', state.coachModeEnabled);
+    if (wakeItem) wakeItem.classList.toggle('active', state.wakeWordEnabled);
+    if (coachCheck) coachCheck.hidden = !state.coachModeEnabled;
+    if (wakeCheck) wakeCheck.hidden = !state.wakeWordEnabled;
+}
+
+function closeToolsMenu() {
+    const menu = document.getElementById('toolsMenu');
+    const trigger = document.querySelector('.tools-menu-container > .icon-btn-upload');
+    if (menu) {
+        menu.classList.remove('open');
+        menu.setAttribute('aria-hidden', 'true');
+    }
+    if (trigger) trigger.setAttribute('aria-expanded', 'false');
+}
+
+function toggleToolsMenu(event) {
+    if (event) event.stopPropagation();
+    const menu = document.getElementById('toolsMenu');
+    const trigger = document.querySelector('.tools-menu-container > .icon-btn-upload');
+    if (!menu) return;
+
+    const isOpen = menu.classList.toggle('open');
+    menu.setAttribute('aria-hidden', String(!isOpen));
+    if (trigger) trigger.setAttribute('aria-expanded', String(isOpen));
+    if (isOpen) updateToolsMenuState();
+}
+
+function selectToolsMenuItem(action) {
+    closeToolsMenu();
+    if (action === 'attach') {
+        const input = document.getElementById('mediaUploadInput');
+        if (input) input.click();
+    } else if (action === 'coach') {
+        toggleCoachMode();
+        updateToolsMenuState();
+    } else if (action === 'wake') {
+        toggleWakeWordListening();
+        updateToolsMenuState();
+    }
+}
 
 function updateVoiceConversationIndicator(status) {
     const micBtn = document.getElementById('micBtn');
