@@ -688,31 +688,45 @@ YOUR PRIMARY JOB IS TO TRIGGER AND EXPAND THE USER'S CREATIVITY FIRST.
     state.chatHistory[state.chatMode].push(aiMsgObj);
     chatList.scrollTop = chatList.scrollHeight;
 
-    if (state.voiceSpeechEnabled && 'speechSynthesis' in window) {
-        const utterance = new SpeechSynthesisUtterance(reply);
-        if (state.wakeWordWaitingForReply) {
-            updateWakeWordIndicator('speaking');
-            utterance.onend = finishWakeWordReply;
-            utterance.onerror = finishWakeWordReply;
-        } else if (state.voiceConversationMode) {
-            updateVoiceConversationIndicator('speaking');
-            utterance.onend = () => {
-                if (!state.voiceConversationMode || !state.voiceConversationWaitingForReply) return;
-                state.voiceSpeechEnabled = state.voiceConversationSpeechWasEnabled;
-                startVoiceConversationListening();
-            };
-            utterance.onerror = () => {
-                if (!state.voiceConversationMode || !state.voiceConversationWaitingForReply) return;
-                state.voiceSpeechEnabled = state.voiceConversationSpeechWasEnabled;
-                startVoiceConversationListening();
-            };
+    if (state.voiceSpeechEnabled) {
+        const onSpeechComplete = state.wakeWordWaitingForReply
+            ? finishWakeWordReply
+            : state.voiceConversationMode
+                ? () => {
+                    if (!state.voiceConversationMode || !state.voiceConversationWaitingForReply) return;
+                    state.voiceSpeechEnabled = state.voiceConversationSpeechWasEnabled;
+                    startVoiceConversationListening();
+                }
+                : null;
+
+        if (onSpeechComplete) {
+            if (state.wakeWordWaitingForReply) updateWakeWordIndicator('speaking');
+            if (state.voiceConversationMode) updateVoiceConversationIndicator('speaking');
         }
-        window.speechSynthesis.speak(utterance);
-    } else if (state.wakeWordWaitingForReply) {
-        finishWakeWordReply();
-    } else if (state.voiceConversationMode) {
-        state.voiceSpeechEnabled = state.voiceConversationSpeechWasEnabled;
-        startVoiceConversationListening();
+
+        speakWithGeminiTTS(reply)
+            .then(() => {
+                if (onSpeechComplete) onSpeechComplete();
+            })
+            .catch(error => {
+                console.warn('[Gemini TTS] Falling back to browser speech:', error);
+                if ('speechSynthesis' in window) {
+                    const utterance = new SpeechSynthesisUtterance(reply);
+                    if (onSpeechComplete) {
+                        let completed = false;
+                        const completeOnce = () => {
+                            if (completed) return;
+                            completed = true;
+                            onSpeechComplete();
+                        };
+                        utterance.onend = completeOnce;
+                        utterance.onerror = completeOnce;
+                    }
+                    window.speechSynthesis.speak(utterance);
+                } else if (onSpeechComplete) {
+                    onSpeechComplete();
+                }
+            });
     }
 }
 
@@ -1771,6 +1785,101 @@ function saveFirebaseConfig() {
 
 function getGeminiApiKey() {
     return localStorage.getItem('nizhal_gemini_api_key') || GEMINI_API_KEY;
+}
+
+function base64ToBytes(base64) {
+    const binary = atob(base64);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) {
+        bytes[i] = binary.charCodeAt(i);
+    }
+    return bytes;
+}
+
+function pcmToWavBlob(pcmBytes, sampleRate = 24000, channels = 1) {
+    const wav = new ArrayBuffer(44 + pcmBytes.byteLength);
+    const view = new DataView(wav);
+    const writeString = (offset, value) => {
+        for (let i = 0; i < value.length; i++) view.setUint8(offset + i, value.charCodeAt(i));
+    };
+    const byteRate = sampleRate * channels * 2;
+    const blockAlign = channels * 2;
+
+    writeString(0, 'RIFF');
+    view.setUint32(4, 36 + pcmBytes.byteLength, true);
+    writeString(8, 'WAVE');
+    writeString(12, 'fmt ');
+    view.setUint32(16, 16, true);
+    view.setUint16(20, 1, true);
+    view.setUint16(22, channels, true);
+    view.setUint32(24, sampleRate, true);
+    view.setUint32(28, byteRate, true);
+    view.setUint16(32, blockAlign, true);
+    view.setUint16(34, 16, true);
+    writeString(36, 'data');
+    view.setUint32(40, pcmBytes.byteLength, true);
+    new Uint8Array(wav, 44).set(pcmBytes);
+
+    return new Blob([wav], { type: 'audio/wav' });
+}
+
+async function speakWithGeminiTTS(text) {
+    const key = getGeminiApiKey();
+    if (!key || !text || typeof fetch !== 'function' || typeof Audio !== 'function') {
+        throw new Error('Gemini TTS is unavailable in this browser.');
+    }
+
+    const model = 'gemini-2.5-flash-preview-tts';
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(key)}`;
+    const response = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+            contents: [{ parts: [{ text: `Read this naturally and warmly in the language it is written in:\n${text}` }] }],
+            generationConfig: {
+                responseModalities: ['AUDIO'],
+                speechConfig: {
+                    voiceConfig: {
+                        prebuiltVoiceConfig: { voiceName: 'Kore' }
+                    }
+                }
+            }
+        })
+    });
+
+    const data = await response.json();
+    if (!response.ok) {
+        throw new Error(data.error?.message || `Gemini TTS request failed (${response.status})`);
+    }
+
+    const audioPart = data.candidates?.[0]?.content?.parts?.find(part => part.inlineData?.data);
+    if (!audioPart) throw new Error('Gemini TTS returned no audio.');
+
+    const inlineData = audioPart.inlineData;
+    const mimeType = inlineData.mimeType || 'audio/L16;rate=24000';
+    const audioBytes = base64ToBytes(inlineData.data);
+    let audioBlob;
+    if (/audio\/L16/i.test(mimeType) || /audio\/pcm/i.test(mimeType)) {
+        const rateMatch = mimeType.match(/rate=(\d+)/i);
+        const channelsMatch = mimeType.match(/channels=(\d+)/i);
+        audioBlob = pcmToWavBlob(audioBytes, rateMatch ? Number(rateMatch[1]) : 24000, channelsMatch ? Number(channelsMatch[1]) : 1);
+    } else if (/^audio\//i.test(mimeType)) {
+        audioBlob = new Blob([audioBytes], { type: mimeType });
+    } else {
+        throw new Error(`Unsupported Gemini TTS audio format: ${mimeType}`);
+    }
+
+    const audioUrl = URL.createObjectURL(audioBlob);
+    const audio = new Audio(audioUrl);
+    try {
+        await new Promise((resolve, reject) => {
+            audio.onended = resolve;
+            audio.onerror = () => reject(new Error('Gemini TTS audio could not be played.'));
+            audio.play().catch(reject);
+        });
+    } finally {
+        URL.revokeObjectURL(audioUrl);
+    }
 }
 
 async function callGeminiApi(requestBody, maxRetries = 3) {
