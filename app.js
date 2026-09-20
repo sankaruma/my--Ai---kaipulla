@@ -311,10 +311,13 @@ function resetPinToDefault() {
 // 3. LANGUAGE DETECTION ENGINE (Tamil, English, Tanglish)
 // ==========================================================================
 function handleTypingLanguageDetection() {
-    if (state.languageMode !== 'auto') return; // Manual language locked, skip auto-detect
-
     const input = document.getElementById('chatInput');
     const text = input ? input.value : '';
+    const sendButton = document.querySelector('.btn-send');
+    if (sendButton) sendButton.classList.toggle('send-btn-active', text.trim().length > 0);
+
+    if (state.languageMode !== 'auto') return; // Manual language locked, skip auto-detect
+
     const lang = detectLanguage(text);
     
     state.activeLanguage = lang;
@@ -491,7 +494,11 @@ function sendChatMessage() {
     const userMsgObj = { sender: 'user', text, media: state.attachedMedia, lang: state.activeLanguage, time: timeNow };
     state.chatHistory[state.chatMode].push(userMsgObj);
 
-    if (input) input.value = '';
+    if (input) {
+        input.value = '';
+        const sendButton = document.querySelector('.btn-send');
+        if (sendButton) sendButton.classList.remove('send-btn-active');
+    }
     const currentMedia = state.attachedMedia;
     removeMediaAttachment();
     chatList.scrollTop = chatList.scrollHeight;
@@ -659,6 +666,9 @@ YOUR PRIMARY JOB IS TO TRIGGER AND EXPAND THE USER'S CREATIVITY FIRST.
             </div>
         </div>
     `;
+    const previousAiMessages = chatList.querySelectorAll('.msg-ai');
+    const previousAiMessage = previousAiMessages[previousAiMessages.length - 1];
+    if (previousAiMessage) previousAiMessage.classList.add('msg-settled');
     chatList.insertAdjacentHTML('beforeend', aiMsgHtml);
 
     const aiMsgObj = { sender: 'ai', text: reply, lang, time: timeNow };
