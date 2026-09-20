@@ -20,11 +20,6 @@ const state = {
     voiceConversationMode: false,
     voiceConversationSpeechWasEnabled: false,
     voiceConversationWaitingForReply: false,
-    wakeWordEnabled: false,
-    wakeWordAwaitingCommand: false,
-    wakeWordWaitingForReply: false,
-    wakeWordSpeechWasEnabled: false,
-    wakeWordAcknowledged: false,
     isRecordingMic: false,
     attachedMedia: null,
     
@@ -690,18 +685,15 @@ YOUR PRIMARY JOB IS TO TRIGGER AND EXPAND THE USER'S CREATIVITY FIRST.
     chatList.scrollTop = chatList.scrollHeight;
 
     if (state.voiceSpeechEnabled) {
-        const onSpeechComplete = state.wakeWordWaitingForReply
-            ? finishWakeWordReply
-            : state.voiceConversationMode
-                ? () => {
-                    if (!state.voiceConversationMode || !state.voiceConversationWaitingForReply) return;
-                    state.voiceSpeechEnabled = state.voiceConversationSpeechWasEnabled;
-                    startVoiceConversationListening();
-                }
-                : null;
+        const onSpeechComplete = state.voiceConversationMode
+            ? () => {
+                if (!state.voiceConversationMode || !state.voiceConversationWaitingForReply) return;
+                state.voiceSpeechEnabled = state.voiceConversationSpeechWasEnabled;
+                startVoiceConversationListening();
+            }
+            : null;
 
         if (onSpeechComplete) {
-            if (state.wakeWordWaitingForReply) updateWakeWordIndicator('speaking');
             if (state.voiceConversationMode) updateVoiceConversationIndicator('speaking');
         }
 
@@ -760,10 +752,6 @@ function toggleCoachMode() {
 let speechRecognitionInstance = null;
 let voiceConversationTranscriptSent = false;
 let voiceConversationResumeScheduled = false;
-let wakeWordRecognitionInstance = null;
-let wakeWordRestartTimer = null;
-let wakeWordStarting = false;
-let wakeWordCommandTimer = null;
 
 function setupToolsMenu() {
     document.addEventListener('click', event => {
@@ -774,14 +762,10 @@ function setupToolsMenu() {
 
 function updateToolsMenuState() {
     const coachItem = document.querySelector('.tools-menu-item[onclick="selectToolsMenuItem(\'coach\')"]');
-    const wakeItem = document.querySelector('.tools-menu-item[onclick="selectToolsMenuItem(\'wake\')"]');
     const coachCheck = document.getElementById('toolsCoachCheck');
-    const wakeCheck = document.getElementById('toolsWakeCheck');
 
     if (coachItem) coachItem.classList.toggle('active', state.coachModeEnabled);
-    if (wakeItem) wakeItem.classList.toggle('active', state.wakeWordEnabled);
     if (coachCheck) coachCheck.hidden = !state.coachModeEnabled;
-    if (wakeCheck) wakeCheck.hidden = !state.wakeWordEnabled;
 }
 
 function closeToolsMenu() {
@@ -813,9 +797,6 @@ function selectToolsMenuItem(action) {
         if (input) input.click();
     } else if (action === 'coach') {
         toggleCoachMode();
-        updateToolsMenuState();
-    } else if (action === 'wake') {
-        toggleWakeWordListening();
         updateToolsMenuState();
     }
 }
@@ -857,199 +838,6 @@ function startVoiceConversationListening() {
         state.voiceConversationMode = false;
         state.voiceSpeechEnabled = state.voiceConversationSpeechWasEnabled;
         updateVoiceConversationIndicator('off');
-    }
-}
-
-function updateWakeWordIndicator(status) {
-    const wakeWordBtn = document.getElementById('wakeWordBtn');
-    if (!wakeWordBtn) return;
-
-    const isActive = status !== 'off';
-    wakeWordBtn.classList.toggle('wake-word-active', isActive);
-    wakeWordBtn.classList.toggle('wake-word-speaking', status === 'speaking');
-    if (status === 'speaking') {
-        wakeWordBtn.title = 'Hey Pokki - Speaking (tap to stop)';
-        wakeWordBtn.setAttribute('aria-label', 'Hey Pokki speaking, tap to stop');
-    } else if (isActive) {
-        wakeWordBtn.title = 'Hey Pokki - Listening for wake word (tap to stop)';
-        wakeWordBtn.setAttribute('aria-label', 'Hey Pokki listening, tap to stop');
-    } else {
-        wakeWordBtn.title = 'Hey Pokki wake-word listening';
-        wakeWordBtn.removeAttribute('aria-label');
-    }
-}
-
-function playWakeWordAcknowledgment() {
-    try {
-        const AudioContext = window.AudioContext || window.webkitAudioContext;
-        if (!AudioContext) return;
-        const audioContext = new AudioContext();
-        const oscillator = audioContext.createOscillator();
-        const gain = audioContext.createGain();
-        oscillator.type = 'sine';
-        oscillator.frequency.value = 880;
-        gain.gain.setValueAtTime(0.08, audioContext.currentTime);
-        gain.gain.exponentialRampToValueAtTime(0.001, audioContext.currentTime + 0.12);
-        oscillator.connect(gain);
-        gain.connect(audioContext.destination);
-        oscillator.start();
-        oscillator.stop(audioContext.currentTime + 0.12);
-        oscillator.addEventListener('ended', () => audioContext.close());
-    } catch (error) {
-        console.log('[Wake Word] Acknowledgment sound unavailable:', error);
-    }
-}
-
-function findWakeWord(transcript) {
-    const normalizedTranscript = transcript.toLowerCase();
-    const variants = ['pokki', 'poki', 'poc key', 'pocky'];
-    for (const variant of variants) {
-        if (normalizedTranscript.includes(variant)) {
-            return variant;
-        }
-    }
-    return null;
-}
-
-function extractWakeWordCommand(transcript, wakeWord) {
-    if (!wakeWord) return transcript.trim();
-    const command = transcript.slice(transcript.toLowerCase().indexOf(wakeWord) + wakeWord.length).trim();
-    return command.replace(/^[,!.?;:\s]+/, '').trim();
-}
-
-function scheduleWakeWordRestart() {
-    if (!state.wakeWordEnabled || state.wakeWordWaitingForReply || wakeWordRestartTimer) return;
-    wakeWordRestartTimer = setTimeout(() => {
-        wakeWordRestartTimer = null;
-        startWakeWordListening();
-    }, 350);
-}
-
-function startWakeWordListening() {
-    if (!state.wakeWordEnabled || !wakeWordRecognitionInstance || state.wakeWordWaitingForReply || wakeWordStarting) return;
-
-    wakeWordStarting = true;
-    updateWakeWordIndicator('listening');
-    try {
-        wakeWordRecognitionInstance.start();
-    } catch (error) {
-        console.log('[Wake Word] Could not start recognition:', error);
-        scheduleWakeWordRestart();
-    } finally {
-        wakeWordStarting = false;
-    }
-}
-
-function stopWakeWordListening() {
-    if (wakeWordRestartTimer) {
-        clearTimeout(wakeWordRestartTimer);
-        wakeWordRestartTimer = null;
-    }
-    if (wakeWordRecognitionInstance) {
-        try {
-            wakeWordRecognitionInstance.stop();
-        } catch (error) {
-            console.log('[Wake Word] Recognition already stopped:', error);
-        }
-    }
-    updateWakeWordIndicator('off');
-}
-
-function sendWakeWordCommand(command) {
-    const input = document.getElementById('chatInput');
-    if (!input || !command.trim()) return;
-
-    if (wakeWordCommandTimer) {
-        clearTimeout(wakeWordCommandTimer);
-        wakeWordCommandTimer = null;
-    }
-    state.wakeWordAwaitingCommand = false;
-    state.wakeWordAcknowledged = false;
-    state.wakeWordWaitingForReply = true;
-    state.wakeWordSpeechWasEnabled = state.voiceSpeechEnabled;
-    state.voiceSpeechEnabled = true;
-    input.value = command.trim();
-    handleTypingLanguageDetection();
-    stopWakeWordListening();
-    sendChatMessage();
-}
-
-function finishWakeWordReply() {
-    if (!state.wakeWordWaitingForReply) return;
-    state.wakeWordWaitingForReply = false;
-    state.voiceSpeechEnabled = state.wakeWordSpeechWasEnabled;
-    if (state.wakeWordEnabled) {
-        startWakeWordListening();
-    } else {
-        updateWakeWordIndicator('off');
-    }
-}
-
-function initWakeWordRecognition(SpeechRecognition) {
-    wakeWordRecognitionInstance = new SpeechRecognition();
-    wakeWordRecognitionInstance.continuous = true;
-    wakeWordRecognitionInstance.interimResults = true;
-
-    wakeWordRecognitionInstance.onresult = (event) => {
-        for (let i = event.resultIndex; i < event.results.length; i++) {
-            const result = event.results[i];
-            const transcript = result[0].transcript.trim();
-            const wakeWord = findWakeWord(transcript);
-
-            if (wakeWord && !state.wakeWordAcknowledged && !state.wakeWordWaitingForReply) {
-                state.wakeWordAcknowledged = true;
-                state.wakeWordAwaitingCommand = true;
-                playWakeWordAcknowledgment();
-                wakeWordCommandTimer = setTimeout(() => {
-                    state.wakeWordAwaitingCommand = false;
-                    state.wakeWordAcknowledged = false;
-                    wakeWordCommandTimer = null;
-                }, 5000);
-            }
-
-            if (!result.isFinal || state.wakeWordWaitingForReply) continue;
-
-            if (state.wakeWordAwaitingCommand) {
-                const command = wakeWord ? extractWakeWordCommand(transcript, wakeWord) : transcript;
-                if (command) sendWakeWordCommand(command);
-            }
-        }
-    };
-
-    wakeWordRecognitionInstance.onend = () => {
-        if (state.wakeWordEnabled && !state.wakeWordWaitingForReply) scheduleWakeWordRestart();
-    };
-
-    wakeWordRecognitionInstance.onerror = (error) => {
-        console.log('[Wake Word] Recognition error:', error);
-        if (state.wakeWordEnabled && !state.wakeWordWaitingForReply && error.error !== 'aborted') {
-            scheduleWakeWordRestart();
-        }
-    };
-}
-
-function toggleWakeWordListening() {
-    if (!wakeWordRecognitionInstance) {
-        alert('Wake-word listening is not supported in this browser.');
-        return;
-    }
-
-    state.wakeWordEnabled = !state.wakeWordEnabled;
-    if (state.wakeWordEnabled) {
-        if (state.voiceConversationMode) toggleVoiceRecording();
-        startWakeWordListening();
-    } else {
-        const wasWaitingForReply = state.wakeWordWaitingForReply;
-        state.wakeWordAwaitingCommand = false;
-        state.wakeWordWaitingForReply = false;
-        state.wakeWordAcknowledged = false;
-        if (wasWaitingForReply) state.voiceSpeechEnabled = state.wakeWordSpeechWasEnabled;
-        if (wakeWordCommandTimer) {
-            clearTimeout(wakeWordCommandTimer);
-            wakeWordCommandTimer = null;
-        }
-        if ('speechSynthesis' in window) window.speechSynthesis.cancel();
-        stopWakeWordListening();
     }
 }
 
@@ -1103,7 +891,6 @@ function initWebSpeechRecognition() {
             }
         };
 
-        initWakeWordRecognition(SpeechRecognition);
     }
 }
 
