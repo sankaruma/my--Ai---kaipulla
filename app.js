@@ -14,7 +14,7 @@ const state = {
     sessionId: sessionStorage.getItem('nizhal_session_id') || (typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `session-${Date.now()}-${Math.random().toString(36).slice(2)}`),
     activeLanguage: 'English',
     languageMode: 'auto', // 'auto' | 'Tamil Script' | 'Tanglish' | 'English'
-    voiceSpeechEnabled: false,
+    voiceSpeechEnabled: getStoredBoolean('nizhal_voice_speech'),
     coachModeEnabled: false,
     isRecordingMic: false,
     attachedMedia: null,
@@ -35,6 +35,18 @@ const state = {
     // PWA Prompt
     deferredPwaPrompt: null
 };
+
+let voiceAudioContext = null;
+let voiceTranscriptSent = false;
+let voiceRequestPending = false;
+
+function getStoredBoolean(key) {
+    try {
+        return localStorage.getItem(key) === 'true';
+    } catch (error) {
+        return false;
+    }
+}
 
 // Preset Prompt Suggestions
 const PROMPT_PRESETS = {
@@ -66,6 +78,7 @@ document.addEventListener('DOMContentLoaded', () => {
     setupReminderNotificationChecker();
     setupToolsMenu();
     setupGlobalErrorHandlers();
+    syncVoiceSpeechIcon();
     renderPromptSuggestions();
     renderChatHistoryUI();
     updateApiKeyBadge();
@@ -496,6 +509,7 @@ function handleChatEnter(e) {
 }
 
 function sendChatMessage() {
+    stopVoicePlayback();
     const input = document.getElementById('chatInput');
     const text = input ? input.value.trim() : '';
 
@@ -626,6 +640,9 @@ YOUR PRIMARY JOB IS TO TRIGGER AND EXPAND THE USER'S CREATIVITY FIRST.
     if (state.coachModeEnabled) {
         systemPrompt += `\n\nIMPORTANT - COACH MODE IS ON: Do not give a complete, ready-to-use finished idea or script. Instead, act like a creative coach: ask 1-2 sharp, specific questions to help the user think through their own idea, or give a partial direction/framework with a blank for them to fill in themselves. Build on whatever they say next. Keep it short - a question or a partial nudge, not a lecture. The goal is to trigger their own thinking, not do the creative work for them.`;
     }
+    if (state.voiceSpeechEnabled || voiceRequestPending) {
+        systemPrompt += `\n\nVOICE OUTPUT: Keep the main reply in natural Tanglish for the chat. After the main reply, append exactly this delimiter: |||SPOKEN||| followed by a short spoken version in Tamil script or clean English, no more than 3 sentences. Do not use the delimiter anywhere else.`;
+    }
 
     // Build conversation history so the AI remembers earlier turns in this chat mode
     // (Gemini expects alternating user/model turns; we skip the message we just added below)
@@ -692,12 +709,20 @@ YOUR PRIMARY JOB IS TO TRIGGER AND EXPAND THE USER'S CREATIVITY FIRST.
         res = await callGeminiWithFriendlyRetry(requestBody);
     } catch (error) {
         console.warn('[Home Chat] Gemini request failed:', redactError(error), { status: error.status, model: error.model });
+        voiceRequestPending = false;
         showFriendlyToast('Ippo mudiyala, konjam kazhichi try pannunga');
         restoreChatInput(query);
         showChatFailure(typingId, 'Ippo mudiyala, konjam kazhichi try pannunga');
         return;
     }
     let reply = res.text || '';
+    let spokenReply = reply;
+    const spokenDelimiter = '|||SPOKEN|||';
+    if (reply.includes(spokenDelimiter)) {
+        const voiceParts = reply.split(spokenDelimiter);
+        reply = voiceParts[0].trim();
+        spokenReply = voiceParts.slice(1).join(spokenDelimiter).trim() || reply;
+    }
 
     // Check if model invoked Function Calling to auto-create a task
     if (res.functionCall && res.functionCall.name === 'create_task') {
@@ -758,14 +783,9 @@ YOUR PRIMARY JOB IS TO TRIGGER AND EXPAND THE USER'S CREATIVITY FIRST.
     state.chatHistory[state.chatMode].push(aiMsgObj);
     chatList.scrollTop = chatList.scrollHeight;
 
-    if (state.voiceSpeechEnabled) {
-        speakWithGeminiTTS(reply).catch(error => {
-                console.warn('[Gemini TTS] Falling back to browser speech:', redactError(error));
-                if ('speechSynthesis' in window) {
-                    const utterance = new SpeechSynthesisUtterance(reply);
-                    window.speechSynthesis.speak(utterance);
-                }
-            });
+    if (state.voiceSpeechEnabled || voiceRequestPending) {
+        speakReply(spokenReply);
+        voiceRequestPending = false;
     }
 }
 
@@ -778,10 +798,58 @@ function clearChatHistory() {
 
 function toggleVoiceSpeech() {
     state.voiceSpeechEnabled = !state.voiceSpeechEnabled;
+    try {
+        localStorage.setItem('nizhal_voice_speech', String(state.voiceSpeechEnabled));
+    } catch (error) {
+        console.warn('[Voice] Preference storage failed:', redactError(error));
+    }
+    syncVoiceSpeechIcon();
+    updateToolsMenuState();
+}
+
+function syncVoiceSpeechIcon() {
     const icon = document.getElementById('speechToggleIcon');
     if (icon) {
         icon.className = state.voiceSpeechEnabled ? 'fa-solid fa-volume-high text-neon' : 'fa-solid fa-volume-xmark text-dim';
     }
+}
+
+function resumeVoiceAudioContext() {
+    try {
+        const AudioContext = window.AudioContext || window.webkitAudioContext;
+        if (AudioContext) {
+            voiceAudioContext = voiceAudioContext || new AudioContext();
+            if (voiceAudioContext.state === 'suspended') voiceAudioContext.resume();
+        }
+    } catch (error) {
+        console.warn('[Voice] Audio context unavailable:', redactError(error));
+    }
+}
+
+function stopVoicePlayback() {
+    if ('speechSynthesis' in window) window.speechSynthesis.cancel();
+    const stopButton = document.getElementById('voiceStopBtn');
+    if (stopButton) stopButton.classList.remove('active');
+}
+
+function speakReply(text) {
+    if (!text || !('speechSynthesis' in window)) return;
+    stopVoicePlayback();
+    const utterance = new SpeechSynthesisUtterance(text.trim());
+    const voices = window.speechSynthesis.getVoices();
+    const preferredVoice = voices.find(voice => voice.lang.toLowerCase().startsWith('ta-in'))
+        || voices.find(voice => voice.lang.toLowerCase().startsWith('en-in'));
+    if (preferredVoice) {
+        utterance.voice = preferredVoice;
+        utterance.lang = preferredVoice.lang;
+    } else {
+        utterance.lang = detectLanguage(text) === 'Tamil Script' ? 'ta-IN' : 'en-IN';
+    }
+    const stopButton = document.getElementById('voiceStopBtn');
+    if (stopButton) stopButton.classList.add('active');
+    utterance.onend = () => stopButton?.classList.remove('active');
+    utterance.onerror = () => stopButton?.classList.remove('active');
+    window.speechSynthesis.speak(utterance);
 }
 
 
@@ -807,9 +875,13 @@ function setupToolsMenu() {
 function updateToolsMenuState() {
     const coachItem = document.querySelector('.tools-menu-item[onclick="selectToolsMenuItem(\'coach\')"]');
     const coachCheck = document.getElementById('toolsCoachCheck');
+    const voiceItem = document.querySelector('.tools-menu-item[onclick="selectToolsMenuItem(\'voice\')"]');
+    const voiceCheck = document.getElementById('toolsVoiceCheck');
 
     if (coachItem) coachItem.classList.toggle('active', state.coachModeEnabled);
     if (coachCheck) coachCheck.hidden = !state.coachModeEnabled;
+    if (voiceItem) voiceItem.classList.toggle('active', state.voiceSpeechEnabled);
+    if (voiceCheck) voiceCheck.hidden = !state.voiceSpeechEnabled;
 }
 
 function closeToolsMenu() {
@@ -842,6 +914,9 @@ function selectToolsMenuItem(action) {
     } else if (action === 'coach') {
         toggleCoachMode();
         updateToolsMenuState();
+    } else if (action === 'voice') {
+        toggleVoiceSpeech();
+        updateToolsMenuState();
     }
 }
 
@@ -854,19 +929,29 @@ function initWebSpeechRecognition() {
 
         speechRecognitionInstance.onresult = (event) => {
             let transcript = '';
+            let finalTranscript = '';
             for (let i = event.resultIndex; i < event.results.length; i++) {
                 const result = event.results[i];
                 transcript += result[0].transcript;
+                if (result.isFinal) finalTranscript += result[0].transcript;
             }
             const input = document.getElementById('chatInput');
             if (input) {
                 input.value = transcript;
                 handleTypingLanguageDetection();
+                if (finalTranscript.trim() && !voiceTranscriptSent) {
+                    voiceTranscriptSent = true;
+                    voiceRequestPending = true;
+                    input.value = finalTranscript.trim();
+                    handleTypingLanguageDetection();
+                    sendChatMessage();
+                }
             }
         };
 
         speechRecognitionInstance.onend = () => {
             state.isRecordingMic = false;
+            voiceTranscriptSent = false;
             const micBtn = document.getElementById('micBtn');
             if (micBtn) micBtn.classList.remove('recording');
         };
@@ -883,6 +968,8 @@ function initWebSpeechRecognition() {
 
 function toggleVoiceRecording() {
     const micBtn = document.getElementById('micBtn');
+    stopVoicePlayback();
+    resumeVoiceAudioContext();
     if (!speechRecognitionInstance) {
         alert('Web Speech API is not supported in this browser. You can type directly.');
         return;
@@ -893,6 +980,7 @@ function toggleVoiceRecording() {
         state.isRecordingMic = false;
         if (micBtn) micBtn.classList.remove('recording');
     } else {
+        speechRecognitionInstance.lang = state.activeLanguage === 'Tamil Script' ? 'ta-IN' : 'en-IN';
         speechRecognitionInstance.start();
         state.isRecordingMic = true;
         if (micBtn) micBtn.classList.add('recording');
@@ -1609,10 +1697,6 @@ function saveFirebaseConfig() {
     }
 }
 
-function getGeminiApiKey() {
-    return '';
-}
-
 function getAppToken() {
     try {
         return localStorage.getItem('nizhal_app_token') || '';
@@ -1647,46 +1731,6 @@ async function callGeminiWithFriendlyRetry(requestBody) {
             throw retryError;
         }
     }
-}
-
-function base64ToBytes(base64) {
-    const binary = atob(base64);
-    const bytes = new Uint8Array(binary.length);
-    for (let i = 0; i < binary.length; i++) {
-        bytes[i] = binary.charCodeAt(i);
-    }
-    return bytes;
-}
-
-function pcmToWavBlob(pcmBytes, sampleRate = 24000, channels = 1) {
-    const wav = new ArrayBuffer(44 + pcmBytes.byteLength);
-    const view = new DataView(wav);
-    const writeString = (offset, value) => {
-        for (let i = 0; i < value.length; i++) view.setUint8(offset + i, value.charCodeAt(i));
-    };
-    const byteRate = sampleRate * channels * 2;
-    const blockAlign = channels * 2;
-
-    writeString(0, 'RIFF');
-    view.setUint32(4, 36 + pcmBytes.byteLength, true);
-    writeString(8, 'WAVE');
-    writeString(12, 'fmt ');
-    view.setUint32(16, 16, true);
-    view.setUint16(20, 1, true);
-    view.setUint16(22, channels, true);
-    view.setUint32(24, sampleRate, true);
-    view.setUint32(28, byteRate, true);
-    view.setUint16(32, blockAlign, true);
-    view.setUint16(34, 16, true);
-    writeString(36, 'data');
-    view.setUint32(40, pcmBytes.byteLength, true);
-    new Uint8Array(wav, 44).set(pcmBytes);
-
-    return new Blob([wav], { type: 'audio/wav' });
-}
-
-async function speakWithGeminiTTS(text) {
-    throw new Error('Gemini TTS is disabled in the browser proxy phase.');
 }
 
 async function callGeminiApi(requestBody) {

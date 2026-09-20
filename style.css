@@ -735,6 +735,11 @@ body.dark-theme {
     display: none;
 }
 
+#voiceStopBtn.active {
+    color: var(--neon-pink);
+    box-shadow: var(--glow-pink);
+}
+
 .friendly-error-toast {
     position: fixed;
     left: 50%;

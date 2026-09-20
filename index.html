@@ -105,6 +105,7 @@
                         <div class="chat-actions-top">
                             <button class="icon-btn" title="📝 View Tasks List" onclick="switchView('view-tasks')"><i class="fa-solid fa-list-check text-neon"></i></button>
                             <button class="icon-btn" title="Voice Response Speech Toggle" onclick="toggleVoiceSpeech()"><i class="fa-solid fa-volume-xmark text-dim" id="speechToggleIcon"></i></button>
+                            <button class="icon-btn" id="voiceStopBtn" title="Stop voice playback" onclick="stopVoicePlayback()"><i class="fa-solid fa-stop"></i></button>
                             <button class="icon-btn" title="Clear Chat History" onclick="clearChatHistory()"><i class="fa-solid fa-trash-can"></i></button>
                         </div>
                     </div>
@@ -152,6 +153,11 @@
                                     <i class="fa-solid fa-lightbulb"></i>
                                     <span>Coach Mode</span>
                                     <i class="fa-solid fa-check tools-menu-check" id="toolsCoachCheck"></i>
+                                </button>
+                                <button type="button" class="tools-menu-item" role="menuitem" onclick="selectToolsMenuItem('voice')">
+                                    <i class="fa-solid fa-volume-high"></i>
+                                    <span>Voice Output</span>
+                                    <i class="fa-solid fa-check tools-menu-check" id="toolsVoiceCheck"></i>
                                 </button>
                             </div>
                             <input type="file" id="mediaUploadInput" accept="image/*,video/*" onchange="handleMediaUpload(event)">
