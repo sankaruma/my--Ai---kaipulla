@@ -370,17 +370,17 @@
                     </div>
 
                     <div class="grid-2">
-                        <!-- Gemini API Key Settings -->
+                        <!-- Netlify AI Proxy App Token Settings -->
                         <div class="glass-card">
-                            <h3><i class="fa-solid fa-wand-magic-sparkles text-cyan"></i> Gemini AI Configuration</h3>
-                            <p class="text-dim">Update or enter a custom Google Gemini API Key if daily quota expires.</p>
+                            <h3><i class="fa-solid fa-wand-magic-sparkles text-cyan"></i> AI Proxy Configuration</h3>
+                            <p class="text-dim">Enter the shared App Token configured in Netlify. Provider API keys stay server-side.</p>
                             <div class="mt-3">
-                                <span class="badge badge-purple" id="apiKeyStatusBadge">Active: Default Key</span>
+                                <span class="badge badge-purple" id="apiKeyStatusBadge">App token required for AI proxy</span>
                             </div>
                             <div class="mt-3">
-                                <input type="text" id="geminiKeyInput" class="cyber-input" placeholder="Paste your Gemini API key" autocomplete="off">
-                                <button class="btn btn-secondary" onclick="saveGeminiKeyFromInput()"><i class="fa-solid fa-floppy-disk"></i> Save Key</button>
-                                <button class="btn btn-outline ml-2" onclick="resetApiKeyToDefault()"><i class="fa-solid fa-rotate-left"></i> Reset Key</button>
+                                <input type="text" id="geminiKeyInput" class="cyber-input" placeholder="Paste your Netlify App Token" autocomplete="off">
+                                <button class="btn btn-secondary" onclick="saveGeminiKeyFromInput()"><i class="fa-solid fa-floppy-disk"></i> Save Token</button>
+                                <button class="btn btn-outline ml-2" onclick="resetApiKeyToDefault()"><i class="fa-solid fa-rotate-left"></i> Reset Token</button>
                                 <p id="geminiKeyStatus" class="auth-status" role="status"></p>
                             </div>
                         </div>

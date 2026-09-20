@@ -3,7 +3,6 @@
    ========================================================================== */
 
 // Global App State
-const GEMINI_API_KEY = "AQ.Ab8RN6LZSsh8H2acLhGQBmY2WSo88fJq0E6rfnFDZBrJapJLtA";
 const state = {
     isUnlocked: false,
     isAuthenticated: false,
@@ -77,6 +76,17 @@ document.addEventListener('DOMContentLoaded', () => {
 function redactError(error) {
     const message = error instanceof Error ? error.message : String(error || 'Unknown error');
     return message.replace(/([?&]key=)[^&\s]+/gi, '$1[REDACTED]').replace(/AIza[\w-]+/g, '[REDACTED]');
+}
+
+function parseStoredJson(value, fallback) {
+    if (!value) return fallback;
+    try {
+        const parsed = JSON.parse(value);
+        return parsed === null || parsed === undefined ? fallback : parsed;
+    } catch (error) {
+        console.warn('[Storage] Invalid JSON ignored:', redactError(error));
+        return fallback;
+    }
 }
 
 function showFriendlyToast(message) {
@@ -1600,93 +1610,25 @@ function saveFirebaseConfig() {
 }
 
 function getGeminiApiKey() {
-    return localStorage.getItem('nizhal_gemini_api_key') || GEMINI_API_KEY;
+    return '';
 }
 
-const GEMINI_MODEL_CACHE_KEY = 'nizhal_gemini_models';
-const GEMINI_MODEL_CACHE_TTL = 24 * 60 * 60 * 1000;
-let geminiModelsPromise = null;
-const deadGeminiModels = new Set();
-
-function parseStoredJson(value, fallback) {
-    if (!value) return fallback;
+function getAppToken() {
     try {
-        const parsed = JSON.parse(value);
-        return parsed === null || parsed === undefined ? fallback : parsed;
+        return localStorage.getItem('nizhal_app_token') || '';
     } catch (error) {
-        console.warn('[Storage] Invalid JSON ignored:', redactError(error));
-        return fallback;
+        console.warn('[App Token] Storage read failed:', redactError(error));
+        return '';
     }
 }
 
-function getModelId(modelName) {
-    return String(modelName || '').replace(/^models\//, '');
-}
-
-function sortGeminiModels(models) {
-    return models.sort((a, b) => {
-        const aVersion = (getModelId(a).match(/gemini-(\d+(?:\.\d+)?)/i) || [0, '0'])[1];
-        const bVersion = (getModelId(b).match(/gemini-(\d+(?:\.\d+)?)/i) || [0, '0'])[1];
-        const versionOrder = Number(bVersion) - Number(aVersion);
-        if (versionOrder) return versionOrder;
-
-        const aPreview = /preview|experimental|exp/i.test(a);
-        const bPreview = /preview|experimental|exp/i.test(b);
-        if (aPreview !== bPreview) return aPreview ? 1 : -1;
-        return a.localeCompare(b);
-    });
-}
-
-function filterGeminiModels(models) {
-    const excluded = /image|audio|tts|live|embedding|thinking/i;
-    return sortGeminiModels(models
-        .filter(model => model && model.name && Array.isArray(model.supportedGenerationMethods))
-        .filter(model => model.supportedGenerationMethods.includes('generateContent'))
-        .map(model => getModelId(model.name))
-        .filter(name => /flash/i.test(name) && !excluded.test(name)));
-}
-
-async function getGeminiModels() {
-    if (geminiModelsPromise) return geminiModelsPromise;
-
-    geminiModelsPromise = (async () => {
-        const fallback = ['gemini-flash-latest'];
-        const cached = parseStoredJson(localStorage.getItem(GEMINI_MODEL_CACHE_KEY), null);
-        if (cached && Array.isArray(cached.models) && cached.fetchedAt && Date.now() - cached.fetchedAt < GEMINI_MODEL_CACHE_TTL) {
-            const cachedModels = filterGeminiModels(cached.models.map(name => ({
-                name,
-                supportedGenerationMethods: ['generateContent']
-            })));
-            return cachedModels.length ? cachedModels : fallback;
-        }
-
-        try {
-            const key = getGeminiApiKey();
-            const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${encodeURIComponent(key)}`);
-            const data = await response.json();
-            if (!response.ok) throw new Error(`Model discovery failed (${response.status})`);
-            const models = filterGeminiModels(data.models || []);
-            if (!models.length) throw new Error('Model discovery returned no usable models');
-            try {
-                localStorage.setItem(GEMINI_MODEL_CACHE_KEY, JSON.stringify({ fetchedAt: Date.now(), models }));
-            } catch (error) {
-                console.warn('[Gemini Models] Cache write failed:', redactError(error));
-            }
-            return models;
-        } catch (error) {
-            console.warn('[Gemini Models] Discovery failed:', redactError(error));
-            return fallback;
-        }
-    })();
-
-    return geminiModelsPromise;
-}
-
-function createGeminiError(message, status, model) {
-    const error = new Error(message);
-    error.status = status;
-    error.model = model;
-    return error;
+function saveAppToken(value) {
+    try {
+        if (value) localStorage.setItem('nizhal_app_token', value);
+        else localStorage.removeItem('nizhal_app_token');
+    } catch (error) {
+        console.warn('[App Token] Storage failed:', redactError(error));
+    }
 }
 
 async function callGeminiWithFriendlyRetry(requestBody) {
@@ -1744,196 +1686,48 @@ function pcmToWavBlob(pcmBytes, sampleRate = 24000, channels = 1) {
 }
 
 async function speakWithGeminiTTS(text) {
-    const key = getGeminiApiKey();
-    if (!key || !text || typeof fetch !== 'function' || typeof Audio !== 'function') {
-        throw new Error('Gemini TTS is unavailable in this browser.');
-    }
-
-    const model = 'gemini-2.5-flash-preview-tts';
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(key)}`;
-    const response = await fetch(url, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-            contents: [{ parts: [{ text: `Read this naturally and warmly in the language it is written in:\n${text}` }] }],
-            generationConfig: {
-                responseModalities: ['AUDIO'],
-                speechConfig: {
-                    voiceConfig: {
-                        prebuiltVoiceConfig: { voiceName: 'Kore' }
-                    }
-                }
-            }
-        })
-    });
-
-    const data = await response.json();
-    if (!response.ok) {
-        throw new Error(data.error?.message || `Gemini TTS request failed (${response.status})`);
-    }
-
-    const audioPart = data.candidates?.[0]?.content?.parts?.find(part => part.inlineData?.data);
-    if (!audioPart) throw new Error('Gemini TTS returned no audio.');
-
-    const inlineData = audioPart.inlineData;
-    const mimeType = inlineData.mimeType || 'audio/L16;rate=24000';
-    const audioBytes = base64ToBytes(inlineData.data);
-    let audioBlob;
-    if (/audio\/L16/i.test(mimeType) || /audio\/pcm/i.test(mimeType)) {
-        const rateMatch = mimeType.match(/rate=(\d+)/i);
-        const channelsMatch = mimeType.match(/channels=(\d+)/i);
-        audioBlob = pcmToWavBlob(audioBytes, rateMatch ? Number(rateMatch[1]) : 24000, channelsMatch ? Number(channelsMatch[1]) : 1);
-    } else if (/^audio\//i.test(mimeType)) {
-        audioBlob = new Blob([audioBytes], { type: mimeType });
-    } else {
-        throw new Error(`Unsupported Gemini TTS audio format: ${mimeType}`);
-    }
-
-    const audioUrl = URL.createObjectURL(audioBlob);
-    const audio = new Audio(audioUrl);
-    try {
-        await new Promise((resolve, reject) => {
-            audio.onended = resolve;
-            audio.onerror = () => reject(new Error('Gemini TTS audio could not be played.'));
-            audio.play().catch(reject);
-        });
-    } finally {
-        URL.revokeObjectURL(audioUrl);
-    }
+    throw new Error('Gemini TTS is disabled in the browser proxy phase.');
 }
 
-async function callGeminiApi(requestBody, maxRetries = 3) {
-    const key = getGeminiApiKey();
-    const models = await getGeminiModels();
-
-    for (const model of models) {
-        if (deadGeminiModels.has(model)) continue;
-        let transientRetryCount = 0;
-
-        while (true) {
-            try {
-                // Clone requestBody to avoid mutating original object across retries
-                const payload = typeof structuredClone === 'function' ? structuredClone(requestBody) : JSON.parse(JSON.stringify(requestBody));
-                payload.generationConfig = payload.generationConfig || {};
-                if (payload.generationConfig.temperature === undefined) payload.generationConfig.temperature = 0.9;
-
-                // Default Thinking Mode: include thinkingConfig for models supporting thinking.
-                const supportsThinking = (model === 'gemini-2.5-flash' || model === 'gemini-flash-latest');
-                if (supportsThinking) {
-                    if (!payload.generationConfig.thinkingConfig) {
-                        payload.generationConfig.thinkingConfig = { thinkingLevel: 'high' };
-                    }
-                }
-
-                const headers = {
-                    'Content-Type': 'application/json'
-                };
-
-                const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(key)}`;
-
-                let response = await fetch(url, {
-                    method: 'POST',
-                    headers: headers,
-                    body: JSON.stringify(payload)
-                });
-                let data = await response.json();
-
-                // If API returns an error specifically about thinkingConfig / thinkingLevel not supported, retry once without it
-                if (!response.ok && data.error?.message && (
-                    data.error.message.includes('thinkingConfig') ||
-                    data.error.message.includes('thinkingLevel') ||
-                    data.error.message.includes('thinking')
-                )) {
-                    console.warn(`[Gemini API] thinkingConfig not supported for model '${model}'. Retrying without thinkingConfig...`);
-                    if (payload.generationConfig) {
-                        delete payload.generationConfig.thinkingConfig;
-                    }
-                    response = await fetch(url, {
-                        method: 'POST',
-                        headers: headers,
-                        body: JSON.stringify(payload)
-                    });
-                    data = await response.json();
-                }
-
-                if (response.ok && data.candidates?.[0]?.content?.parts) {
-                    const parts = data.candidates[0].content.parts;
-                    const funcCallPart = parts.find(p => p.functionCall);
-                    const text = parts.map(p => p.text).filter(Boolean).join('\n');
-                    if (funcCallPart || text) {
-                        return {
-                            success: true,
-                            text: text,
-                            functionCall: funcCallPart ? funcCallPart.functionCall : null,
-                            rawParts: parts
-                        };
-                    }
-                }
-
-                const errorStatus = response.status >= 400 ? response.status : data.error?.code;
-                if (errorStatus === 404 || (data.error?.message && data.error.message.toLowerCase().includes('not found'))) {
-                    deadGeminiModels.add(model);
-                    console.warn(`[Gemini API] Model '${model}' returned 404; trying the next detected model.`);
-                    break;
-                }
-
-                if (errorStatus === 503 || errorStatus === 429) {
-                    const status = errorStatus;
-                    if (transientRetryCount < 2) {
-                        const delay = transientRetryCount === 0 ? 1500 : 3000;
-                        transientRetryCount++;
-                        console.warn(`[Gemini API] Received ${status} for model '${model}'. Retrying same model in ${delay}ms.`);
-                        await new Promise(resolve => setTimeout(resolve, delay));
-                        continue;
-                    }
-                    console.warn(`[Gemini API] Model '${model}' exhausted ${status} retries; trying the next detected model.`);
-                    break;
-                }
-
-                if (data.error?.message) {
-                    throw createGeminiError(`Gemini request failed (${response.status || data.error.code || 'unknown'})`, response.status || data.error.code, model);
-                }
-                throw createGeminiError(`Gemini model '${model}' returned no usable content`, response.status, model);
-            } catch (err) {
-                if (err.status === 404) {
-                    deadGeminiModels.add(model);
-                    console.warn(`[Gemini API] Model '${model}' returned 404; trying the next detected model.`);
-                    break;
-                }
-                if (err.status === 429 || err.status === 503) {
-                    if (transientRetryCount < 2) {
-                        const delay = transientRetryCount === 0 ? 1500 : 3000;
-                        transientRetryCount++;
-                        console.warn(`[Gemini API] Model '${model}' returned ${err.status}; retry ${transientRetryCount}/2 in ${delay}ms.`);
-                        await new Promise(resolve => setTimeout(resolve, delay));
-                        continue;
-                    }
-                    console.warn(`[Gemini API] Model '${model}' exhausted ${err.status} retries; trying the next detected model.`);
-                    break;
-                }
-                console.warn(`[Gemini API] Model '${model}' failed:`, redactError(err));
-                break;
-                }
-            }
+async function callGeminiApi(requestBody) {
+    const messages = (requestBody.contents || []).map(message => ({
+        role: message.role === 'model' ? 'assistant' : message.role,
+        content: (message.parts || []).map(part => part.inlineData
+            ? { type: 'image_url', image_url: { url: `data:${part.inlineData.mimeType};base64,${part.inlineData.data}` } }
+            : { type: 'text', text: part.text || '' })
+    }));
+    const systemInstruction = requestBody.systemInstruction?.parts?.map(part => part.text || '').join('\n') || '';
+    const response = await fetch('/.netlify/functions/ai', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'X-App-Token': getAppToken()
+        },
+        body: JSON.stringify({
+            messages,
+            systemInstruction,
+            generationConfig: requestBody.generationConfig || {},
+            tools: requestBody.tools || null,
+            mode: state.chatMode
+        })
+    });
+    const data = await response.json();
+    if (!response.ok || data.error) {
+        const error = new Error(data.error || `AI proxy failed (${response.status})`);
+        error.status = response.status;
+        throw error;
     }
-
-            throw createGeminiError('All detected Gemini models failed.');
+    return data;
 }
 
 function openApiKeyModal() {
-    const currentKey = localStorage.getItem('nizhal_gemini_api_key') || '';
-    const newKey = prompt('Enter your Google Gemini API Key (from aistudio.google.com):', currentKey);
+    const currentToken = getAppToken();
+    const newKey = prompt('Enter your Netlify AI proxy App Token:', currentToken);
     if (newKey !== null) {
         const trimmed = newKey.trim();
-        if (trimmed) {
-            localStorage.setItem('nizhal_gemini_api_key', trimmed);
-            alert('✅ Gemini API Key updated successfully!');
-            updateApiKeyBadge();
-        } else {
-            localStorage.removeItem('nizhal_gemini_api_key');
-            alert('🔄 Reset to default Gemini API Key.');
-            updateApiKeyBadge();
-        }
+        saveAppToken(trimmed);
+        alert(trimmed ? '✅ App token updated successfully!' : '🔄 App token removed.');
+        updateApiKeyBadge();
     }
 }
 
@@ -1942,39 +1736,31 @@ function saveGeminiKeyFromInput() {
     const status = document.getElementById('geminiKeyStatus');
     const trimmed = input ? input.value.trim() : '';
 
-    if (trimmed) {
-        localStorage.setItem('nizhal_gemini_api_key', trimmed);
-        if (status) status.innerText = 'Gemini API key saved successfully.';
-    } else {
-        localStorage.removeItem('nizhal_gemini_api_key');
-        if (status) status.innerText = 'Gemini API key removed.';
-    }
+    saveAppToken(trimmed);
+    if (status) status.innerText = trimmed ? 'App token saved successfully.' : 'App token removed.';
 
     updateApiKeyBadge();
 }
 
 function resetApiKeyToDefault() {
-    localStorage.removeItem('nizhal_gemini_api_key');
-    alert('🔄 Reset to default Gemini API Key.');
+    saveAppToken('');
+    alert('🔄 App token removed.');
     updateApiKeyBadge();
 }
 
 function updateApiKeyBadge() {
     const badge = document.getElementById('apiKeyStatusBadge');
     const input = document.getElementById('geminiKeyInput');
-    const custom = localStorage.getItem('nizhal_gemini_api_key');
+    const custom = getAppToken();
 
     if (input) input.value = custom || '';
     if (badge) {
         if (custom) {
             badge.className = 'badge badge-green';
-            badge.innerText = 'Active: Custom User Key';
-        } else if (GEMINI_API_KEY) {
-            badge.className = 'badge badge-purple';
-            badge.innerText = 'Active: Default Key';
+            badge.innerText = 'Active: App Token';
         } else {
             badge.className = 'badge badge-purple';
-            badge.innerText = 'No API key set - add one in Settings';
+            badge.innerText = 'App token required for AI proxy';
         }
     }
 }

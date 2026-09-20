@@ -21,6 +21,10 @@ A Cyberpunk / Neon themed Progressive Web App (PWA) AI Assistant built with Vani
 
 ## 🚀 Getting Started
 
+### Netlify AI proxy environment variables
+
+Set these in the Netlify dashboard; never put provider keys in browser code: `APP_TOKEN`, `GEMINI_API_KEY`, `GROQ_API_KEY`, `CEREBRAS_API_KEY`, `MISTRAL_API_KEY`, `CLOUDFLARE_API_TOKEN`, and `CLOUDFLARE_ACCOUNT_ID`. Enter the same `APP_TOKEN` once in the app Settings. Missing provider keys are skipped.
+
 ### 1. Run Locally
 
 Open `index.html` directly in any modern browser, or run a local web server:
