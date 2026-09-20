@@ -17,9 +17,6 @@ const state = {
     languageMode: 'auto', // 'auto' | 'Tamil Script' | 'Tanglish' | 'English'
     voiceSpeechEnabled: false,
     coachModeEnabled: false,
-    voiceConversationMode: false,
-    voiceConversationSpeechWasEnabled: false,
-    voiceConversationWaitingForReply: false,
     isRecordingMic: false,
     attachedMedia: null,
     
@@ -685,39 +682,11 @@ YOUR PRIMARY JOB IS TO TRIGGER AND EXPAND THE USER'S CREATIVITY FIRST.
     chatList.scrollTop = chatList.scrollHeight;
 
     if (state.voiceSpeechEnabled) {
-        const onSpeechComplete = state.voiceConversationMode
-            ? () => {
-                if (!state.voiceConversationMode || !state.voiceConversationWaitingForReply) return;
-                state.voiceSpeechEnabled = state.voiceConversationSpeechWasEnabled;
-                startVoiceConversationListening();
-            }
-            : null;
-
-        if (onSpeechComplete) {
-            if (state.voiceConversationMode) updateVoiceConversationIndicator('speaking');
-        }
-
-        speakWithGeminiTTS(reply)
-            .then(() => {
-                if (onSpeechComplete) onSpeechComplete();
-            })
-            .catch(error => {
+        speakWithGeminiTTS(reply).catch(error => {
                 console.warn('[Gemini TTS] Falling back to browser speech:', error);
                 if ('speechSynthesis' in window) {
                     const utterance = new SpeechSynthesisUtterance(reply);
-                    if (onSpeechComplete) {
-                        let completed = false;
-                        const completeOnce = () => {
-                            if (completed) return;
-                            completed = true;
-                            onSpeechComplete();
-                        };
-                        utterance.onend = completeOnce;
-                        utterance.onerror = completeOnce;
-                    }
                     window.speechSynthesis.speak(utterance);
-                } else if (onSpeechComplete) {
-                    onSpeechComplete();
                 }
             });
     }
@@ -750,8 +719,6 @@ function toggleCoachMode() {
 // 5. WEB SPEECH API & MEDIA UPLOAD HANDLING
 // ==========================================================================
 let speechRecognitionInstance = null;
-let voiceConversationTranscriptSent = false;
-let voiceConversationResumeScheduled = false;
 
 function setupToolsMenu() {
     document.addEventListener('click', event => {
@@ -801,46 +768,6 @@ function selectToolsMenuItem(action) {
     }
 }
 
-function updateVoiceConversationIndicator(status) {
-    const micBtn = document.getElementById('micBtn');
-    if (!micBtn) return;
-
-    micBtn.classList.toggle('voice-conversation-active', status !== 'off');
-    micBtn.classList.toggle('voice-conversation-speaking', status === 'speaking');
-    if (status === 'listening') {
-        micBtn.title = 'Voice Conversation Mode - Listening (tap to stop)';
-        micBtn.setAttribute('aria-label', 'Voice Conversation Mode listening, tap to stop');
-    } else if (status === 'speaking') {
-        micBtn.title = 'Voice Conversation Mode - Speaking (tap to stop)';
-        micBtn.setAttribute('aria-label', 'Voice Conversation Mode speaking, tap to stop');
-    } else {
-        micBtn.title = 'Speak to input text';
-        micBtn.removeAttribute('aria-label');
-    }
-}
-
-function startVoiceConversationListening() {
-    if (!state.voiceConversationMode || !speechRecognitionInstance) return;
-    if (voiceConversationResumeScheduled) return;
-
-    voiceConversationResumeScheduled = true;
-    voiceConversationTranscriptSent = false;
-    state.voiceConversationWaitingForReply = false;
-    state.isRecordingMic = true;
-    updateVoiceConversationIndicator('listening');
-    try {
-        speechRecognitionInstance.start();
-        voiceConversationResumeScheduled = false;
-    } catch (error) {
-        console.log('[WebSpeech] Could not restart conversation:', error);
-        voiceConversationResumeScheduled = false;
-        state.isRecordingMic = false;
-        state.voiceConversationMode = false;
-        state.voiceSpeechEnabled = state.voiceConversationSpeechWasEnabled;
-        updateVoiceConversationIndicator('off');
-    }
-}
-
 function initWebSpeechRecognition() {
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (SpeechRecognition) {
@@ -850,25 +777,14 @@ function initWebSpeechRecognition() {
 
         speechRecognitionInstance.onresult = (event) => {
             let transcript = '';
-            let finalTranscript = '';
             for (let i = event.resultIndex; i < event.results.length; i++) {
                 const result = event.results[i];
                 transcript += result[0].transcript;
-                if (result.isFinal) finalTranscript += result[0].transcript;
             }
             const input = document.getElementById('chatInput');
             if (input) {
                 input.value = transcript;
                 handleTypingLanguageDetection();
-                if (state.voiceConversationMode && finalTranscript.trim() && !voiceConversationTranscriptSent) {
-                    voiceConversationTranscriptSent = true;
-                    state.voiceConversationWaitingForReply = true;
-                    state.voiceConversationSpeechWasEnabled = state.voiceSpeechEnabled;
-                    state.voiceSpeechEnabled = true;
-                    input.value = finalTranscript.trim();
-                    handleTypingLanguageDetection();
-                    sendChatMessage();
-                }
             }
         };
 
@@ -876,9 +792,6 @@ function initWebSpeechRecognition() {
             state.isRecordingMic = false;
             const micBtn = document.getElementById('micBtn');
             if (micBtn) micBtn.classList.remove('recording');
-            if (state.voiceConversationMode && !state.voiceConversationWaitingForReply) {
-                setTimeout(startVoiceConversationListening, 250);
-            }
         };
 
         speechRecognitionInstance.onerror = (err) => {
@@ -886,9 +799,6 @@ function initWebSpeechRecognition() {
             state.isRecordingMic = false;
             const micBtn = document.getElementById('micBtn');
             if (micBtn) micBtn.classList.remove('recording');
-            if (state.voiceConversationMode && err.error !== 'aborted') {
-                voiceConversationTranscriptSent = false;
-            }
         };
 
     }
@@ -901,23 +811,14 @@ function toggleVoiceRecording() {
         return;
     }
 
-    if (state.voiceConversationMode) {
-        state.voiceConversationMode = false;
-        state.voiceConversationWaitingForReply = false;
-        state.voiceSpeechEnabled = state.voiceConversationSpeechWasEnabled;
-        if ('speechSynthesis' in window) window.speechSynthesis.cancel();
-        if (state.isRecordingMic) speechRecognitionInstance.stop();
-        state.isRecordingMic = false;
-        if (micBtn) micBtn.classList.remove('recording');
-        updateVoiceConversationIndicator('off');
-    } else if (state.isRecordingMic) {
+    if (state.isRecordingMic) {
         speechRecognitionInstance.stop();
         state.isRecordingMic = false;
         if (micBtn) micBtn.classList.remove('recording');
     } else {
-        state.voiceConversationMode = true;
-        state.voiceConversationSpeechWasEnabled = state.voiceSpeechEnabled;
-        startVoiceConversationListening();
+        speechRecognitionInstance.start();
+        state.isRecordingMic = true;
+        if (micBtn) micBtn.classList.add('recording');
     }
 }
 

@@ -756,26 +756,9 @@ body.dark-theme {
     animation: pulseMic 1.2s infinite;
 }
 
-.icon-btn-mic.voice-conversation-active {
-    border-color: var(--neon-cyan);
-    box-shadow: 0 0 12px rgba(66, 201, 200, 0.65);
-    animation: pulseVoiceConversation 1.4s infinite;
-}
-
-.icon-btn-mic.voice-conversation-speaking {
-    background: var(--neon-cyan);
-    color: #fff;
-}
-
 @keyframes pulseMic {
     0% { transform: scale(1); }
     50% { transform: scale(1.1); }
-    100% { transform: scale(1); }
-}
-
-@keyframes pulseVoiceConversation {
-    0% { transform: scale(1); }
-    50% { transform: scale(1.08); }
     100% { transform: scale(1); }
 }
 
