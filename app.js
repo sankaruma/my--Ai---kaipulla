@@ -1466,8 +1466,9 @@ async function callGeminiApi(requestBody, maxRetries = 3) {
     const key = getGeminiApiKey();
     const models = ['gemini-2.5-flash', 'gemini-2.5-flash-lite', 'gemini-flash-latest'];
     let modelIndex = 0;
+    let transientRetryCount = 0;
 
-    for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    for (let attempt = 0; attempt <= maxRetries || transientRetryCount < 2 || modelIndex < models.length - 1; attempt++) {
         const model = models[modelIndex] || models[models.length - 1];
         try {
             // Clone requestBody to avoid mutating original object across retries
@@ -1533,24 +1534,30 @@ async function callGeminiApi(requestBody, maxRetries = 3) {
                 console.warn(`[Gemini API] Model '${model}' returned 404 Not Found. Falling back to next model...`);
                 if (modelIndex < models.length - 1) {
                     modelIndex++;
+                    transientRetryCount = 0;
                     continue;
                 }
             }
 
-            // 503 Overloaded or 429 Rate Limit: retry with backoff and advance fallback model if available
+            // 503 Overloaded or 429 Rate Limit: retry the same model twice before fallback
             if (response.status === 503 || response.status === 429 || data.error?.code === 503 || data.error?.code === 429) {
-                console.warn(`[Gemini API] Received ${response.status || data.error?.code} on attempt ${attempt + 1}. Retrying...`, data);
-                if (modelIndex < models.length - 1) {
-                    modelIndex++;
-                }
-                if (attempt < maxRetries) {
-                    await new Promise(r => setTimeout(r, 1200 * (attempt + 1)));
+                const status = response.status || data.error?.code;
+                if (transientRetryCount < 2) {
+                    const delay = transientRetryCount === 0 ? 1500 : 3000;
+                    transientRetryCount++;
+                    console.warn(`[Gemini API] Received ${status} for model '${model}'. Retrying same model in ${delay}ms...`, data);
+                    await new Promise(r => setTimeout(r, delay));
                     continue;
                 }
-                if (response.status === 503 || data.error?.code === 503) {
+                if (modelIndex < models.length - 1) {
+                    modelIndex++;
+                    transientRetryCount = 0;
+                    continue;
+                }
+                if (status === 503) {
                     return { success: false, text: '⚠️ Google Gemini server temporary-ah overloaded-ah irukku (503). Oru 1-2 minutes wait pannitu thirumba try pannunga bro!' };
                 }
-                if (response.status === 429 || data.error?.code === 429) {
+                if (status === 429) {
                     return { success: false, text: '⚠️ Gemini API Free Daily Quota / Rate limit reach aayiduchu (429). aistudio.google.com-la pudhu API key create panni Settings-la podunga!' };
                 }
             }
