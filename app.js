@@ -1468,8 +1468,6 @@ async function callGeminiApi(requestBody, maxRetries = 3) {
             const payload = JSON.parse(JSON.stringify(requestBody));
             payload.generationConfig = payload.generationConfig || {};
             if (payload.generationConfig.temperature === undefined) payload.generationConfig.temperature = 0.9;
-            if (payload.generationConfig.presencePenalty === undefined) payload.generationConfig.presencePenalty = 0.6;
-            if (payload.generationConfig.frequencyPenalty === undefined) payload.generationConfig.frequencyPenalty = 0.5;
 
             // Default Thinking Mode: include thinkingConfig for models supporting thinking ('gemini-2.5-flash' or 'gemini-flash-latest')
             const supportsThinking = (model === 'gemini-2.5-flash' || model === 'gemini-flash-latest');
