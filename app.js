@@ -16,6 +16,7 @@ const state = {
     activeLanguage: 'English',
     languageMode: 'auto', // 'auto' | 'Tamil Script' | 'Tanglish' | 'English'
     voiceSpeechEnabled: false,
+    coachModeEnabled: false,
     isRecordingMic: false,
     attachedMedia: null,
     
@@ -523,7 +524,7 @@ async function generateAiResponse(query, media) {
         ? 'You are helping create Instagram Reel ideas, hooks, captions, and scripts. When you give a full script/idea (not for quick one-line questions), include a short timestamped "BGM & Sound Effects" note suggesting the mood of background music and where sound effects should hit, without naming exact copyrighted songs. For any comedy, meme, or reaction-related request or content with comedic/meme/reaction value, end your reply with a line in this exact format: "Meme template ku: https://searchmemes.in/q/KEYWORD" picking the single most fitting generic keyword (e.g. character name, actor name, or emotion/reaction word like "vadivelu", "goundamani", "shock", "cheems", "santhanam"), not an obscure exact phrase.' 
         : 'You are helping create anime story ideas, plot twists, power systems, and world-building.';
 
-    const systemPrompt = `You are Nizhal Thunai, an elite Creative Director & JARVIS-like co-creator for Tamil content creators and storytellers.
+    let systemPrompt = `You are Nizhal Thunai, an elite Creative Director & JARVIS-like co-creator for Tamil content creators and storytellers.
 You communicate in sharp, witty, street-smart Tanglish (Tamil + English mixed).
 
 CORE MISSION:
@@ -552,6 +553,10 @@ YOUR PRIMARY JOB IS TO TRIGGER AND EXPAND THE USER'S CREATIVITY FIRST.
 - Keep answers punchy, high-energy, and interactive.
 - STRICTLY BAN boring AI clichés: Avoid phrases like "In today's fast-paced world", "Ever wondered", "Get ready to dive in".
 - Sound like a sharp director friend who wants the video to go viral. ${langInstruction}${MOBILE_FORMATTING_INSTRUCTION}`;
+
+    if (state.coachModeEnabled) {
+        systemPrompt += `\n\nIMPORTANT - COACH MODE IS ON: Do not give a complete, ready-to-use finished idea or script. Instead, act like a creative coach: ask 1-2 sharp, specific questions to help the user think through their own idea, or give a partial direction/framework with a blank for them to fill in themselves. Build on whatever they say next. Keep it short - a question or a partial nudge, not a lecture. The goal is to trigger their own thinking, not do the creative work for them.`;
+    }
 
     // Build conversation history so the AI remembers earlier turns in this chat mode
     // (Gemini expects alternating user/model turns; we skip the message we just added below)
@@ -696,6 +701,14 @@ function toggleVoiceSpeech() {
     }
 }
 
+
+function toggleCoachMode() {
+    state.coachModeEnabled = !state.coachModeEnabled;
+    const icon = document.getElementById('coachModeToggleIcon');
+    if (icon) {
+        icon.className = state.coachModeEnabled ? 'fa-solid fa-lightbulb text-neon' : 'fa-solid fa-lightbulb text-dim';
+    }
+}
 // ==========================================================================
 // 5. WEB SPEECH API & MEDIA UPLOAD HANDLING
 // ==========================================================================

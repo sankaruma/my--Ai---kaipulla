@@ -149,6 +149,11 @@
                             <i class="fa-solid fa-microphone"></i>
                         </button>
 
+                        <!-- Coach Mode Toggle -->
+                        <button class="icon-btn" title="Coach Mode - AI asks questions instead of giving full ideas" onclick="toggleCoachMode()">
+                            <i class="fa-solid fa-lightbulb text-dim" id="coachModeToggleIcon"></i>
+                        </button>
+
                         <!-- Text Input -->
                         <input type="text" id="chatInput" placeholder="Ask for Insta Reels ideas, anime plots... (Tamil / Tanglish / English)" oninput="handleTypingLanguageDetection()" onkeypress="handleChatEnter(event)">
 
