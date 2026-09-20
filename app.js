@@ -156,6 +156,7 @@ function initFirebaseAuth() {
                     await firebase.auth().signInWithEmailAndPassword(email, password);
                 } catch (error) {
                     if (error.code === 'auth/user-not-found') {
+                        try {
                             await firebase.auth().createUserWithEmailAndPassword(email, password);
                         } catch (createError) {
                             if (status) status.innerText = createError.message;
@@ -164,6 +165,7 @@ function initFirebaseAuth() {
                     }
                 }
             });
+        }
         if (googleButton) {
             googleButton.addEventListener('click', async () => {
                 if (status) status.innerText = 'Opening Google sign-in...';
