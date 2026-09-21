@@ -74,7 +74,6 @@ document.addEventListener('DOMContentLoaded', () => {
     loadStoredData();
     initPwaServiceWorker();
     initWebSpeechRecognition();
-    initFirebaseAuth();
     setupReminderNotificationChecker();
     setupToolsMenu();
     setupGlobalErrorHandlers();
@@ -125,61 +124,6 @@ function setupGlobalErrorHandlers() {
         console.warn('[Unhandled Promise]', redactError(event.reason));
         showFriendlyToast('Konjam busy-ah irukku, thirumba try panren...');
     });
-}
-
-function initFirebaseAuth() {
-    const status = document.getElementById('firebaseAuthStatus');
-    if (!window.NIZHAL_FIREBASE_CONFIG || typeof firebase === 'undefined') {
-        if (status) status.innerText = 'Firebase Auth is not configured yet.';
-        return;
-    }
-
-    try {
-        document.getElementById('pinLockOverlay')?.classList.add('firebase-auth-configured');
-        if (!firebase.apps.length) firebase.initializeApp(window.NIZHAL_FIREBASE_CONFIG);
-        firebase.auth().onAuthStateChanged(user => {
-            state.isAuthenticated = Boolean(user);
-            if (user) {
-                unlockApp();
-                if (status) status.innerText = `Signed in as ${user.email || user.displayName || 'Nizhal Thunai user'}`;
-            } else {
-                lockApp();
-            }
-        });
-
-        const emailForm = document.getElementById('firebaseEmailAuthForm');
-        if (emailForm) {
-            emailForm.addEventListener('submit', async event => {
-                event.preventDefault();
-                if (status) status.innerText = 'Signing in...';
-                try {
-                    await firebase.auth().signInWithEmailAndPassword(email, password);
-                } catch (error) {
-                    if (error.code === 'auth/user-not-found') {
-                        try {
-                            await firebase.auth().createUserWithEmailAndPassword(email, password);
-                        } catch (createError) {
-                            if (status) status.innerText = createError.message;
-                        }
-                    } else if (status) {
-                    }
-                }
-            });
-        }
-        if (googleButton) {
-            googleButton.addEventListener('click', async () => {
-                if (status) status.innerText = 'Opening Google sign-in...';
-                try {
-                    await firebase.auth().signInWithPopup(new firebase.auth.GoogleAuthProvider());
-                } catch (error) {
-                    if (status) status.innerText = error.message;
-                }
-            });
-        }
-    } catch (error) {
-        console.error('[Firebase Auth Init]', error);
-        if (status) status.innerText = 'Firebase Auth could not be initialized.';
-    }
 }
 
 // Service Worker Registration

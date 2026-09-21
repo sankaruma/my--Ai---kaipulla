@@ -24,11 +24,8 @@
     <!-- App Stylesheet -->
     <link rel="stylesheet" href="style.css">
 
-    <!-- Firebase Compatibility SDKs -->
+    <!-- Supabase SDK -->
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
-    <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
-    <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
-    <script>window.NIZHAL_FIREBASE_CONFIG = window.NIZHAL_FIREBASE_CONFIG || null;</script>
 </head>
 <body class="dark-theme">
     <div id="app" class="app-viewport">
@@ -447,20 +444,6 @@
 
         <!-- PIN LOCK OVERLAY SCREEN -->
         <div id="pinLockOverlay" class="pin-lock-overlay">
-            <div id="firebaseAuthPanel" class="pin-card glass-card">
-                <div class="lock-icon-glow">
-                    <i class="fa-solid fa-user-shield"></i>
-                </div>
-                <h2>Sign in to Nizhal Thunai</h2>
-                <p class="text-dim">Use the same account on your phone and laptop.</p>
-                <form id="firebaseEmailAuthForm" class="auth-form">
-                    <input type="email" id="firebaseEmailInput" class="cyber-input" placeholder="Email address" autocomplete="email" required>
-                    <input type="password" id="firebasePasswordInput" class="cyber-input" placeholder="Password" autocomplete="current-password" required>
-                    <button type="submit" class="btn btn-primary">Sign in / Create account</button>
-                </form>
-                <button id="firebaseGoogleAuthBtn" class="btn btn-secondary auth-google-btn" type="button"><i class="fa-brands fa-google"></i> Continue with Google</button>
-                <p id="firebaseAuthStatus" class="auth-status" role="status"></p>
-            </div>
             <div id="pinFallbackPanel" class="pin-card glass-card">
                 <div class="lock-icon-glow">
                     <i class="fa-solid fa-lock" id="pinLockIcon"></i>
