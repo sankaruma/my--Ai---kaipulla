@@ -526,7 +526,7 @@ function showChatFailure(typingId, message) {
 }
 
 function showAppTokenRequired() {
-    showFriendlyToast('App token set pannala, Settings-la podunga.');
+    showFriendlyToast('App token Settings-la podunga');
     switchView('view-settings');
     const input = document.getElementById('geminiKeyInput');
     if (input) {
@@ -664,12 +664,19 @@ YOUR PRIMARY JOB IS TO TRIGGER AND EXPAND THE USER'S CREATIVITY FIRST.
     try {
         res = await callGeminiWithFriendlyRetry(requestBody);
     } catch (error) {
-        console.warn('[Home Chat] Gemini request failed:', redactError(error), { status: error.status, model: error.model });
         voiceRequestPending = false;
+        if (error.code === 'non_json_response') {
+            console.warn('[Home Chat] Non-JSON proxy response status:', error.status);
+            showFriendlyToast('Site private-ah irukku, Netlify-la Make public pannunga');
+            restoreChatInput(query);
+            showChatFailure(typingId, 'Site private-ah irukku, Netlify-la Make public pannunga');
+            return;
+        }
+        console.warn('[Home Chat] Gemini request failed:', redactError(error), { status: error.status, model: error.model });
         if (error.code === 'bad_app_token') {
             showAppTokenRequired();
             restoreChatInput(query);
-            showChatFailure(typingId, 'App token set pannala, Settings-la podunga.');
+            showChatFailure(typingId, 'App token Settings-la podunga');
             return;
         }
         showFriendlyToast('Ippo mudiyala, konjam kazhichi try pannunga');
@@ -1494,6 +1501,11 @@ async function generateContentIdea() {
         if (contextInput) contextInput.value = '';
         removeIdeaMedia();
     } catch (error) {
+        if (error.code === 'non_json_response') {
+            console.warn('[Content Ideas] Non-JSON proxy response status:', error.status);
+            showFriendlyToast('Site private-ah irukku, Netlify-la Make public pannunga');
+            return;
+        }
         console.warn('[Content Ideas] Gemini request failed:', redactError(error), { status: error.status, model: error.model });
         if (error.code === 'bad_app_token') {
             showAppTokenRequired();
@@ -1685,7 +1697,8 @@ async function callGeminiWithFriendlyRetry(requestBody) {
     try {
         return await callGeminiApi(requestBody);
     } catch (error) {
-        const retryable = error.status === 429 || error.status === 503 || error.code === 'provider_timeout';
+        const retryable = error.code !== 'non_json_response' &&
+            (error.status === 429 || error.status === 503 || error.code === 'provider_timeout');
         if (!retryable) throw error;
         showFriendlyToast('Konjam busy-ah irukku, thirumba try panren...');
         await new Promise(resolve => setTimeout(resolve, 8000));
@@ -1723,7 +1736,16 @@ async function callGeminiApi(requestBody) {
             mode: state.chatMode
         })
     });
-    const data = await response.json();
+    const responseText = await response.text();
+    let data;
+    try {
+        data = JSON.parse(responseText);
+    } catch (error) {
+        const nonJsonError = new Error(`AI proxy returned a non-JSON response (${response.status})`);
+        nonJsonError.status = response.status;
+        nonJsonError.code = 'non_json_response';
+        throw nonJsonError;
+    }
     if (!response.ok || data.error) {
         const error = new Error(data.error || `AI proxy failed (${response.status})`);
         error.status = response.status;
