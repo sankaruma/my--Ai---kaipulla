@@ -41,7 +41,9 @@ async function getGeminiModels() {
 
     const fallback = ['gemini-flash-latest'];
     try {
-        const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${encodeURIComponent(process.env.GEMINI_API_KEY)}`);
+        const response = await fetch('https://generativelanguage.googleapis.com/v1beta/models', {
+            headers: { 'x-goog-api-key': process.env.GEMINI_API_KEY }
+        });
         const data = await response.json();
         if (!response.ok) throw new Error(`Gemini model listing failed (${response.status})`);
         const excluded = /image|audio|tts|live|embedding|thinking/i;
@@ -104,11 +106,14 @@ async function callGemini(input) {
     const models = await getGeminiModels();
     const contents = geminiContents(input.messages);
     for (const model of models) {
-        const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(process.env.GEMINI_API_KEY)}`;
+        const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`;
         try {
             const response = await withTimeout(fetch(url, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: {
+                    'Content-Type': 'application/json',
+                    'x-goog-api-key': process.env.GEMINI_API_KEY
+                },
                 body: JSON.stringify({
                     contents,
                     systemInstruction: input.systemInstruction ? { parts: [{ text: input.systemInstruction }] } : undefined,
@@ -168,8 +173,16 @@ function clientIp(event) {
 exports.handler = async (event) => {
     if (event.httpMethod === 'OPTIONS') return jsonResponse({}, 204);
     if (event.httpMethod !== 'POST') return jsonResponse({ error: 'method_not_allowed' }, 405);
-    if (!process.env.APP_TOKEN || event.headers?.['x-app-token'] !== process.env.APP_TOKEN) {
-        return jsonResponse({ error: 'bad_app_token' }, 401);
+    const serverToken = process.env.APP_TOKEN;
+    const clientToken = event.headers?.['x-app-token'];
+    if (!serverToken) {
+        return jsonResponse({ error: 'bad_app_token', reason: 'server_token_not_set' }, 401);
+    }
+    if (!clientToken) {
+        return jsonResponse({ error: 'bad_app_token', reason: 'client_token_missing' }, 401);
+    }
+    if (clientToken !== serverToken) {
+        return jsonResponse({ error: 'bad_app_token', reason: 'token_mismatch' }, 401);
     }
 
     const now = Date.now();
