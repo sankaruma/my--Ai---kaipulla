@@ -102,7 +102,8 @@ async function providerFetch(url, apiKey, body) {
 }
 
 async function callGemini(input) {
-    if (!process.env.GEMINI_API_KEY) throw new Error('missing_gemini_key');
+    if (!process.env.GEMINI_API_KEY) throw Object.assign(new Error('missing_gemini_key'), { detail: 'missing_gemini_key: GEMINI_API_KEY is not set in Netlify environment variables' });
+    let lastDetail = 'gemini_no_models_available';
     const models = await getGeminiModels();
     const contents = geminiContents(input.messages);
     for (const model of models) {
@@ -123,19 +124,22 @@ async function callGemini(input) {
             }));
             const data = await response.json();
             if (!response.ok) {
+                lastDetail = `gemini_${response.status} (model: ${model}): ${data?.error?.message || 'unknown error'}`;
                 if (response.status === 404) continue;
-                throw Object.assign(new Error(`gemini_${response.status}`), { status: response.status });
+                throw Object.assign(new Error(`gemini_${response.status}`), { status: response.status, detail: lastDetail });
             }
             const parts = data.candidates?.[0]?.content?.parts || [];
             const functionCall = parts.find(part => part.functionCall)?.functionCall || null;
             const text = parts.map(part => part.text).filter(Boolean).join('\n');
             if (text || functionCall) return { text, functionCall, provider: 'gemini', model };
+            lastDetail = `gemini_empty_response (model: ${model})`;
         } catch (error) {
             if (error.status === 404) continue;
+            lastDetail = error.detail || `gemini_error (model: ${model}): ${error.message}`;
             console.warn('[AI Proxy] Gemini model failed:', model, error.message);
         }
     }
-    throw new Error('gemini_failed');
+    throw Object.assign(new Error('gemini_failed'), { detail: lastDetail });
 }
 
 async function callOpenAIProvider(name, url, apiKey, model, input) {
@@ -210,12 +214,14 @@ exports.handler = async (event) => {
         ])
     ];
 
+    const providerErrors = [];
     for (const provider of providers) {
         try {
             return jsonResponse(await provider());
         } catch (error) {
             console.warn('[AI Proxy] Provider failed:', error.message);
+            providerErrors.push(error.detail || error.message);
         }
     }
-    return jsonResponse({ error: 'all_providers_failed' }, 502);
+    return jsonResponse({ error: 'all_providers_failed', details: providerErrors }, 502);
 };

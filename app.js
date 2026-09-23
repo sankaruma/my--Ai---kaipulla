@@ -672,11 +672,11 @@ YOUR PRIMARY JOB IS TO TRIGGER AND EXPAND THE USER'S CREATIVITY FIRST.
             showChatFailure(typingId, 'Site private-ah irukku, Netlify-la Make public pannunga');
             return;
         }
-        console.warn('[Home Chat] Gemini request failed:', redactError(error), { status: error.status, model: error.model });
+        console.warn('[Home Chat] Gemini request failed:', redactError(error), { status: error.status, model: error.model, details: error.details });
         if (error.code === 'bad_app_token') {
             showAppTokenRequired();
             restoreChatInput(query);
-            showChatFailure(typingId, 'App token Settings-la podunga');
+            showChatFailure(typingId, `App token problem: ${error.reason || 'unknown_reason'}`);
             return;
         }
         showFriendlyToast('Ippo mudiyala, konjam kazhichi try pannunga');
@@ -1750,6 +1750,8 @@ async function callGeminiApi(requestBody) {
         const error = new Error(data.error || `AI proxy failed (${response.status})`);
         error.status = response.status;
         error.code = data.error;
+        error.details = data.details;
+        error.reason = data.reason;
         throw error;
     }
     return data;
