@@ -177,8 +177,18 @@ function clientIp(event) {
 exports.handler = async (event) => {
     if (event.httpMethod === 'OPTIONS') return jsonResponse({}, 204);
     if (event.httpMethod !== 'POST') return jsonResponse({ error: 'method_not_allowed' }, 405);
-    const serverToken = process.env.APP_TOKEN;
-    const clientToken = event.headers?.['x-app-token'];
+    const rawServerToken = process.env.APP_TOKEN;
+    const rawClientToken = event.headers?.['x-app-token'];
+    const serverToken = typeof rawServerToken === 'string' ? rawServerToken.trim() : '';
+    const clientToken = typeof rawClientToken === 'string' ? rawClientToken.trim() : '';
+    console.log('[AI Proxy] App token diagnostics:', {
+        headerName: 'x-app-token',
+        receivedTokenLength: typeof rawClientToken === 'string' ? rawClientToken.length : 0,
+        configuredTokenLength: typeof rawServerToken === 'string' ? rawServerToken.length : 0,
+        trimmedReceivedTokenLength: clientToken.length,
+        trimmedConfiguredTokenLength: serverToken.length,
+        strictlyEqualAfterTrim: clientToken === serverToken
+    });
     if (!serverToken) {
         return jsonResponse({ error: 'bad_app_token', reason: 'server_token_not_set' }, 401);
     }

@@ -1677,7 +1677,7 @@ function saveFirebaseConfig() {
 
 function getAppToken() {
     try {
-        return localStorage.getItem('nizhal_app_token') || '';
+        return (localStorage.getItem('nizhal_app_token') || '').trim();
     } catch (error) {
         console.warn('[App Token] Storage read failed:', redactError(error));
         return '';
@@ -1722,11 +1722,12 @@ async function callGeminiApi(requestBody) {
             : { type: 'text', text: part.text || '' })
     }));
     const systemInstruction = requestBody.systemInstruction?.parts?.map(part => part.text || '').join('\n') || '';
+    const appToken = getAppToken().trim();
     const response = await fetch('/.netlify/functions/ai', {
         method: 'POST',
         headers: {
             'Content-Type': 'application/json',
-            'X-App-Token': getAppToken()
+            'X-App-Token': appToken
         },
         body: JSON.stringify({
             messages,
