@@ -1,8 +1,10 @@
 const MODEL_CACHE_TTL = 24 * 60 * 60 * 1000;
 const RATE_WINDOW_MS = 60 * 1000;
 const RATE_LIMIT = 30;
-const PROVIDER_TIMEOUT_MS = 8 * 1000;
-const FUNCTION_BUDGET_MS = 22 * 1000;
+const REQUEST_TIMEOUT_MS = 5 * 1000;
+const GEMINI_DEADLINE_MS = 12 * 1000;
+const PROVIDER_DEADLINE_MS = 6 * 1000;
+const FUNCTION_BUDGET_MS = 25 * 1000;
 let geminiModelCache = { models: [], fetchedAt: 0 };
 const ipHits = new Map();
 
@@ -36,7 +38,7 @@ function sortModels(models) {
     });
 }
 
-async function getGeminiModels(timeoutMs = PROVIDER_TIMEOUT_MS) {
+async function getGeminiModels(timeoutMs = REQUEST_TIMEOUT_MS) {
     if (geminiModelCache.models.length && Date.now() - geminiModelCache.fetchedAt < MODEL_CACHE_TTL) {
         return geminiModelCache.models;
     }
@@ -50,19 +52,21 @@ async function getGeminiModels(timeoutMs = PROVIDER_TIMEOUT_MS) {
         const data = await response.json();
         if (!response.ok) throw new Error(`Gemini model listing failed (${response.status})`);
         const excluded = /image|audio|tts|live|embedding|thinking/i;
-        const models = (data.models || [])
+        const stableModels = (data.models || [])
             .filter(model => model && model.name && model.supportedGenerationMethods?.includes('generateContent'))
             .map(model => modelId(model.name))
-            .filter(name => /flash/i.test(name) && !excluded.test(name));
-        geminiModelCache = { models: sortModels(models), fetchedAt: Date.now() };
-        return geminiModelCache.models.length ? geminiModelCache.models : fallback;
+            .filter(name => /flash/i.test(name) && !excluded.test(name) && !/preview|experimental|exp|omni/i.test(name))
+            .filter(name => name !== 'gemini-flash-latest');
+        const models = [...sortModels(stableModels).slice(0, 2), ...fallback];
+        geminiModelCache = { models, fetchedAt: Date.now() };
+        return models;
     } catch (error) {
         console.warn('[AI Proxy] Gemini discovery failed:', error.message);
         return fallback;
     }
 }
 
-async function fetchWithTimeout(url, options, timeoutMs = PROVIDER_TIMEOUT_MS) {
+async function fetchWithTimeout(url, options, timeoutMs = REQUEST_TIMEOUT_MS) {
     if (timeoutMs <= 0) throw new Error('function_timeout');
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
@@ -99,7 +103,7 @@ function geminiContents(messages) {
     }));
 }
 
-async function providerFetch(url, apiKey, body, timeoutMs = PROVIDER_TIMEOUT_MS) {
+async function providerFetch(url, apiKey, body, timeoutMs = REQUEST_TIMEOUT_MS) {
     const response = await fetchWithTimeout(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
@@ -113,9 +117,10 @@ async function providerFetch(url, apiKey, body, timeoutMs = PROVIDER_TIMEOUT_MS)
 async function callGemini(input, deadline) {
     if (!process.env.GEMINI_API_KEY) throw Object.assign(new Error('missing_gemini_key'), { detail: 'missing_gemini_key: GEMINI_API_KEY is not set in Netlify environment variables' });
     let lastDetail = 'gemini_no_models_available';
-    const models = await getGeminiModels(Math.min(PROVIDER_TIMEOUT_MS, deadline - Date.now()));
+    const models = await getGeminiModels(Math.min(REQUEST_TIMEOUT_MS, deadline - Date.now()));
     const contents = geminiContents(input.messages);
     for (const model of models) {
+        if (Date.now() >= deadline) break;
         const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`;
         try {
             const response = await fetchWithTimeout(url, {
@@ -130,7 +135,7 @@ async function callGemini(input, deadline) {
                     generationConfig: input.generationConfig,
                     tools: input.tools
                 })
-            }, Math.min(PROVIDER_TIMEOUT_MS, deadline - Date.now()));
+            }, Math.min(REQUEST_TIMEOUT_MS, deadline - Date.now()));
             const data = await response.json();
             if (!response.ok) {
                 lastDetail = `gemini_${response.status} (model: ${model}): ${data?.error?.message || 'unknown error'}`;
@@ -158,7 +163,7 @@ async function callOpenAIProvider(name, url, apiKey, model, input, deadline) {
         messages: textMessages(input.messages, input.systemInstruction),
         temperature: input.generationConfig?.temperature,
         max_tokens: input.generationConfig?.maxOutputTokens
-    }, Math.min(PROVIDER_TIMEOUT_MS, deadline - Date.now()));
+    }, Math.min(REQUEST_TIMEOUT_MS, deadline - Date.now()));
     const text = response.choices?.[0]?.message?.content;
     if (!text) throw new Error(`${name}_empty_response`);
     return { text, provider: name, model };
@@ -173,7 +178,7 @@ async function callCloudflare(input, deadline) {
         `https://api.cloudflare.com/client/v4/accounts/${encodeURIComponent(process.env.CLOUDFLARE_ACCOUNT_ID)}/ai/run/${model}`,
         process.env.CLOUDFLARE_API_TOKEN,
         { prompt },
-        Math.min(PROVIDER_TIMEOUT_MS, deadline - Date.now())
+        Math.min(REQUEST_TIMEOUT_MS, deadline - Date.now())
     );
     const text = response.result?.response;
     if (!text) throw new Error('cloudflare_empty_response');
@@ -224,28 +229,29 @@ exports.handler = async (event) => {
     }
 
     const hasImage = JSON.stringify(input.messages || []).includes('image_url');
-    const deadline = Date.now() + FUNCTION_BUDGET_MS;
+    const functionDeadline = Date.now() + FUNCTION_BUDGET_MS;
     const providers = [
-        { name: 'Gemini', call: () => callGemini(input, deadline) },
+        { name: 'Gemini', deadlineMs: GEMINI_DEADLINE_MS, call: deadline => callGemini(input, deadline) },
         ...(hasImage ? [] : [
-            { name: 'Groq', call: () => callOpenAIProvider('groq', 'https://api.groq.com/openai/v1/chat/completions', process.env.GROQ_API_KEY, 'llama-3.3-70b-versatile', input, deadline) },
-            { name: 'Cerebras', call: () => callOpenAIProvider('cerebras', 'https://api.cerebras.ai/v1/chat/completions', process.env.CEREBRAS_API_KEY, 'qwen-3.8-27b', input, deadline) },
-            { name: 'Mistral', call: () => callOpenAIProvider('mistral', 'https://api.mistral.ai/v1/chat/completions', process.env.MISTRAL_API_KEY, 'mistral-small-latest', input, deadline) },
-            { name: 'Cloudflare', call: () => callCloudflare(input, deadline) }
+            { name: 'Groq', deadlineMs: PROVIDER_DEADLINE_MS, call: deadline => callOpenAIProvider('groq', 'https://api.groq.com/openai/v1/chat/completions', process.env.GROQ_API_KEY, 'llama-3.3-70b-versatile', input, deadline) },
+            { name: 'Cerebras', deadlineMs: PROVIDER_DEADLINE_MS, call: deadline => callOpenAIProvider('cerebras', 'https://api.cerebras.ai/v1/chat/completions', process.env.CEREBRAS_API_KEY, 'qwen-3.8-27b', input, deadline) },
+            { name: 'Mistral', deadlineMs: PROVIDER_DEADLINE_MS, call: deadline => callOpenAIProvider('mistral', 'https://api.mistral.ai/v1/chat/completions', process.env.MISTRAL_API_KEY, 'mistral-small-latest', input, deadline) },
+            { name: 'Cloudflare', deadlineMs: PROVIDER_DEADLINE_MS, call: deadline => callCloudflare(input, deadline) }
         ])
     ];
 
     const providerErrors = [];
     for (const provider of providers) {
         console.log(`[AI Proxy] Trying ${provider.name}...`);
-        if (Date.now() >= deadline) {
+        if (Date.now() >= functionDeadline) {
             const error = new Error('function_timeout');
             console.warn(`[AI Proxy] ${provider.name} failed:`, error.message);
             providerErrors.push(error.message);
             break;
         }
         try {
-            return jsonResponse(await provider.call());
+            const providerDeadline = Math.min(functionDeadline, Date.now() + provider.deadlineMs);
+            return jsonResponse(await provider.call(providerDeadline));
         } catch (error) {
             console.warn(`[AI Proxy] ${provider.name} failed:`, error.message);
             providerErrors.push(error.detail || error.message);
