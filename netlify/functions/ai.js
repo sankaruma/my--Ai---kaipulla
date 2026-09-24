@@ -1,6 +1,8 @@
 const MODEL_CACHE_TTL = 24 * 60 * 60 * 1000;
 const RATE_WINDOW_MS = 60 * 1000;
 const RATE_LIMIT = 30;
+const PROVIDER_TIMEOUT_MS = 8 * 1000;
+const FUNCTION_BUDGET_MS = 22 * 1000;
 let geminiModelCache = { models: [], fetchedAt: 0 };
 const ipHits = new Map();
 
@@ -34,16 +36,17 @@ function sortModels(models) {
     });
 }
 
-async function getGeminiModels() {
+async function getGeminiModels(timeoutMs = PROVIDER_TIMEOUT_MS) {
     if (geminiModelCache.models.length && Date.now() - geminiModelCache.fetchedAt < MODEL_CACHE_TTL) {
         return geminiModelCache.models;
     }
 
     const fallback = ['gemini-flash-latest'];
     try {
-        const response = await fetch('https://generativelanguage.googleapis.com/v1beta/models', {
+        const response = await fetchWithTimeout('https://generativelanguage.googleapis.com/v1beta/models', {
+            method: 'GET',
             headers: { 'x-goog-api-key': process.env.GEMINI_API_KEY }
-        });
+        }, timeoutMs);
         const data = await response.json();
         if (!response.ok) throw new Error(`Gemini model listing failed (${response.status})`);
         const excluded = /image|audio|tts|live|embedding|thinking/i;
@@ -59,12 +62,18 @@ async function getGeminiModels() {
     }
 }
 
-function withTimeout(promise, ms = 15000) {
-    let timer;
-    const timeout = new Promise((_, reject) => {
-        timer = setTimeout(() => reject(new Error('provider_timeout')), ms);
-    });
-    return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
+async function fetchWithTimeout(url, options, timeoutMs = PROVIDER_TIMEOUT_MS) {
+    if (timeoutMs <= 0) throw new Error('function_timeout');
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+        return await fetch(url, { ...options, signal: controller.signal });
+    } catch (error) {
+        if (error.name === 'AbortError') throw new Error('provider_timeout');
+        throw error;
+    } finally {
+        clearTimeout(timer);
+    }
 }
 
 function textMessages(messages, systemInstruction) {
@@ -90,26 +99,26 @@ function geminiContents(messages) {
     }));
 }
 
-async function providerFetch(url, apiKey, body) {
-    const response = await withTimeout(fetch(url, {
+async function providerFetch(url, apiKey, body, timeoutMs = PROVIDER_TIMEOUT_MS) {
+    const response = await fetchWithTimeout(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
         body: JSON.stringify(body)
-    }));
+    }, timeoutMs);
     const data = await response.json();
     if (!response.ok) throw Object.assign(new Error(`provider_${response.status}`), { status: response.status });
     return data;
 }
 
-async function callGemini(input) {
+async function callGemini(input, deadline) {
     if (!process.env.GEMINI_API_KEY) throw Object.assign(new Error('missing_gemini_key'), { detail: 'missing_gemini_key: GEMINI_API_KEY is not set in Netlify environment variables' });
     let lastDetail = 'gemini_no_models_available';
-    const models = await getGeminiModels();
+    const models = await getGeminiModels(Math.min(PROVIDER_TIMEOUT_MS, deadline - Date.now()));
     const contents = geminiContents(input.messages);
     for (const model of models) {
         const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`;
         try {
-            const response = await withTimeout(fetch(url, {
+            const response = await fetchWithTimeout(url, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
@@ -121,7 +130,7 @@ async function callGemini(input) {
                     generationConfig: input.generationConfig,
                     tools: input.tools
                 })
-            }));
+            }, Math.min(PROVIDER_TIMEOUT_MS, deadline - Date.now()));
             const data = await response.json();
             if (!response.ok) {
                 lastDetail = `gemini_${response.status} (model: ${model}): ${data?.error?.message || 'unknown error'}`;
@@ -142,20 +151,20 @@ async function callGemini(input) {
     throw Object.assign(new Error('gemini_failed'), { detail: lastDetail });
 }
 
-async function callOpenAIProvider(name, url, apiKey, model, input) {
+async function callOpenAIProvider(name, url, apiKey, model, input, deadline) {
     if (!apiKey) throw new Error(`missing_${name}_key`);
     const response = await providerFetch(url, apiKey, {
         model,
         messages: textMessages(input.messages, input.systemInstruction),
         temperature: input.generationConfig?.temperature,
         max_tokens: input.generationConfig?.maxOutputTokens
-    });
+    }, Math.min(PROVIDER_TIMEOUT_MS, deadline - Date.now()));
     const text = response.choices?.[0]?.message?.content;
     if (!text) throw new Error(`${name}_empty_response`);
     return { text, provider: name, model };
 }
 
-async function callCloudflare(input) {
+async function callCloudflare(input, deadline) {
     if (!process.env.CLOUDFLARE_API_TOKEN || !process.env.CLOUDFLARE_ACCOUNT_ID) throw new Error('missing_cloudflare_config');
     const model = '@cf/meta/llama-3.1-8b-instruct';
     const prompt = textMessages(input.messages, input.systemInstruction)
@@ -163,7 +172,8 @@ async function callCloudflare(input) {
     const response = await providerFetch(
         `https://api.cloudflare.com/client/v4/accounts/${encodeURIComponent(process.env.CLOUDFLARE_ACCOUNT_ID)}/ai/run/${model}`,
         process.env.CLOUDFLARE_API_TOKEN,
-        { prompt }
+        { prompt },
+        Math.min(PROVIDER_TIMEOUT_MS, deadline - Date.now())
     );
     const text = response.result?.response;
     if (!text) throw new Error('cloudflare_empty_response');
@@ -214,22 +224,30 @@ exports.handler = async (event) => {
     }
 
     const hasImage = JSON.stringify(input.messages || []).includes('image_url');
+    const deadline = Date.now() + FUNCTION_BUDGET_MS;
     const providers = [
-        () => callGemini(input),
+        { name: 'Gemini', call: () => callGemini(input, deadline) },
         ...(hasImage ? [] : [
-            () => callOpenAIProvider('groq', 'https://api.groq.com/openai/v1/chat/completions', process.env.GROQ_API_KEY, 'llama-3.3-70b-versatile', input),
-            () => callOpenAIProvider('cerebras', 'https://api.cerebras.ai/v1/chat/completions', process.env.CEREBRAS_API_KEY, 'qwen-3.8-27b', input),
-            () => callOpenAIProvider('mistral', 'https://api.mistral.ai/v1/chat/completions', process.env.MISTRAL_API_KEY, 'mistral-small-latest', input),
-            () => callCloudflare(input)
+            { name: 'Groq', call: () => callOpenAIProvider('groq', 'https://api.groq.com/openai/v1/chat/completions', process.env.GROQ_API_KEY, 'llama-3.3-70b-versatile', input, deadline) },
+            { name: 'Cerebras', call: () => callOpenAIProvider('cerebras', 'https://api.cerebras.ai/v1/chat/completions', process.env.CEREBRAS_API_KEY, 'qwen-3.8-27b', input, deadline) },
+            { name: 'Mistral', call: () => callOpenAIProvider('mistral', 'https://api.mistral.ai/v1/chat/completions', process.env.MISTRAL_API_KEY, 'mistral-small-latest', input, deadline) },
+            { name: 'Cloudflare', call: () => callCloudflare(input, deadline) }
         ])
     ];
 
     const providerErrors = [];
     for (const provider of providers) {
+        console.log(`[AI Proxy] Trying ${provider.name}...`);
+        if (Date.now() >= deadline) {
+            const error = new Error('function_timeout');
+            console.warn(`[AI Proxy] ${provider.name} failed:`, error.message);
+            providerErrors.push(error.message);
+            break;
+        }
         try {
-            return jsonResponse(await provider());
+            return jsonResponse(await provider.call());
         } catch (error) {
-            console.warn('[AI Proxy] Provider failed:', error.message);
+            console.warn(`[AI Proxy] ${provider.name} failed:`, error.message);
             providerErrors.push(error.detail || error.message);
         }
     }
