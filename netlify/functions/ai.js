@@ -117,7 +117,7 @@ async function providerFetch(url, apiKey, body, timeoutMs = REQUEST_TIMEOUT_MS) 
 async function callGemini(input, deadline) {
     if (!process.env.GEMINI_API_KEY) throw Object.assign(new Error('missing_gemini_key'), { detail: 'missing_gemini_key: GEMINI_API_KEY is not set in Netlify environment variables' });
     let lastDetail = 'gemini_no_models_available';
-    const models = await getGeminiModels(Math.min(REQUEST_TIMEOUT_MS, deadline - Date.now()));
+    const models = ['gemini-flash-latest'];
     const contents = geminiContents(input.messages);
     for (const model of models) {
         if (Date.now() >= deadline) break;
